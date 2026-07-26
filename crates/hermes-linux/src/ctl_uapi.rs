@@ -100,6 +100,9 @@ pub struct HermesDrmStatus {
 
 pub const HERMES_DRM_IOCTL_BASE: u8 = 0x48;
 pub const HERMES_DRM_IOCTL_STATUS_NR: u8 = 0x01;
+pub const HERMES_DRM_IOCTL_GET_EDID_NR: u8 = 0x05;
+pub const HERMES_DRM_IOCTL_GET_PROP_NR: u8 = 0x06;
+pub const HERMES_DRM_EDID_MAX: usize = 128;
 
 pub fn hermes_drm_ioctl_status() -> u64 {
     const IOC_READ: u64 = 2;
@@ -107,6 +110,28 @@ pub fn hermes_drm_ioctl_status() -> u64 {
     (IOC_READ << 30)
         | ((HERMES_DRM_IOCTL_BASE as u64) << 8)
         | (HERMES_DRM_IOCTL_STATUS_NR as u64)
+        | (SIZE << 16)
+}
+
+/// `_IOWR` for GET_EDID: connector_id + size + 128 data = 4+4+128 = 136.
+pub fn hermes_drm_ioctl_get_edid() -> u64 {
+    const IOC_READ: u64 = 2;
+    const IOC_WRITE: u64 = 1;
+    const SIZE: u64 = 136;
+    ((IOC_READ | IOC_WRITE) << 30)
+        | ((HERMES_DRM_IOCTL_BASE as u64) << 8)
+        | (HERMES_DRM_IOCTL_GET_EDID_NR as u64)
+        | (SIZE << 16)
+}
+
+/// `_IOWR` for GET_PROP: object_id + prop_id + value = 4+4+8 = 16.
+pub fn hermes_drm_ioctl_get_prop() -> u64 {
+    const IOC_READ: u64 = 2;
+    const IOC_WRITE: u64 = 1;
+    const SIZE: u64 = 16;
+    ((IOC_READ | IOC_WRITE) << 30)
+        | ((HERMES_DRM_IOCTL_BASE as u64) << 8)
+        | (HERMES_DRM_IOCTL_GET_PROP_NR as u64)
         | (SIZE << 16)
 }
 

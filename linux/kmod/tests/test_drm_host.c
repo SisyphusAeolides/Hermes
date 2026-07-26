@@ -44,6 +44,34 @@ int main(void)
 	assert(hermes_drm_logic_disable(&L, 1) == HERMES_DRM_OK);
 	assert(L.active_crtcs == 0);
 
+	/* EDID offline fails closed */
+	{
+		struct hermes_drm_edid edid;
+		struct hermes_drm_prop_get prop;
+		unsigned sum = 0;
+		int i;
+
+		hermes_drm_logic_init(&L, 0);
+		memset(&edid, 0, sizeof(edid));
+		edid.connector_id = 1;
+		assert(hermes_drm_logic_get_edid(&L, &edid) == HERMES_DRM_E_GSP_OFFLINE);
+		assert(edid.size == 0);
+
+		hermes_drm_logic_init(&L, 1);
+		assert(hermes_drm_logic_get_edid(&L, &edid) == HERMES_DRM_OK);
+		assert(edid.size == 128);
+		assert(edid.data[0] == 0x00 && edid.data[1] == 0xff);
+		for (i = 0; i < 128; i++)
+			sum += edid.data[i];
+		assert((sum & 0xff) == 0);
+
+		memset(&prop, 0, sizeof(prop));
+		prop.object_id = 1;
+		prop.prop_id = HERMES_DRM_PROP_EDID;
+		assert(hermes_drm_logic_get_prop(&L, &prop) == HERMES_DRM_OK);
+		assert(prop.value == 1);
+	}
+
 	printf("test_drm_host: PASS\n");
 	return 0;
 }

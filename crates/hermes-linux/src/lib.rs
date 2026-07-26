@@ -66,11 +66,14 @@ pub mod userspace {
     pub const NVIDIA_SMI: &str = "nvidia-smi";
     pub const NVIDIA_MODPROBE: &str = "nvidia-modprobe";
     pub const NVIDIA_PERSISTENCED: &str = "nvidia-persistenced";
+    pub const NVIDIA_CUDA_MPS_CONTROL: &str = "nvidia-cuda-mps-control";
+    pub const NVIDIA_DEBUGDUMP: &str = "nvidia-debugdump";
     pub const LIB_NVIDIA_ML: &str = "libnvidia-ml.so.1";
     pub const LIB_CUDA: &str = "libcuda.so.1";
     pub const LIB_CUDART: &str = "libcudart.so.12";
     pub const LIB_GLX_NVIDIA: &str = "libGLX_nvidia.so.0";
     pub const LIB_EGL_NVIDIA: &str = "libEGL_nvidia.so.0";
+    pub const LIB_NVIDIA_CFG: &str = "libnvidia-cfg.so.1";
 }
 
 /// Drop-in module table entry.
@@ -200,6 +203,16 @@ pub const DROP_IN_CATALOG: &[DropInSurface] = &[
         hermes_crate: "hermes-ctl",
     },
     DropInSurface {
+        kind: "bin",
+        name: userspace::NVIDIA_CUDA_MPS_CONTROL,
+        hermes_crate: "hermes-ctl",
+    },
+    DropInSurface {
+        kind: "bin",
+        name: userspace::NVIDIA_DEBUGDUMP,
+        hermes_crate: "hermes-ctl",
+    },
+    DropInSurface {
         kind: "lib",
         name: userspace::LIB_NVIDIA_ML,
         hermes_crate: "hermes-nvml",
@@ -225,6 +238,11 @@ pub const DROP_IN_CATALOG: &[DropInSurface] = &[
         hermes_crate: "hermes-mesa",
     },
     DropInSurface {
+        kind: "lib",
+        name: userspace::LIB_NVIDIA_CFG,
+        hermes_crate: "hermes-nvml",
+    },
+    DropInSurface {
         kind: "surface",
         name: "DRM/KMS atomic",
         hermes_crate: "hermes-drm",
@@ -239,6 +257,11 @@ pub const DROP_IN_CATALOG: &[DropInSurface] = &[
         name: "CCCL/Thrust host",
         hermes_crate: "hermes-cccl",
     },
+    DropInSurface {
+        kind: "surface",
+        name: "GSP firmware stage",
+        hermes_crate: "hermes-gsp",
+    },
 ];
 
 /// Number of catalog entries (kmod + device + bin + lib + surface).
@@ -247,7 +270,7 @@ pub fn drop_in_catalog_len() -> usize {
 }
 
 /// Target count of classic open-stack named surfaces Hermes advertises.
-pub const DROP_IN_PARITY_TARGET: usize = 24;
+pub const DROP_IN_PARITY_TARGET: usize = 28;
 
 /// Percent of parity target covered by the live catalog (capped at 100).
 pub fn drop_in_parity_percent() -> u32 {

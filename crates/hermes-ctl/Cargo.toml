@@ -24,6 +24,14 @@ path = "src/modprobe_main.rs"
 name = "nvidia-persistenced"
 path = "src/persistenced_main.rs"
 
+[[bin]]
+name = "nvidia-cuda-mps-control"
+path = "src/mps_main.rs"
+
+[[bin]]
+name = "nvidia-debugdump"
+path = "src/debugdump_main.rs"
+
 [dependencies]
 hermes-core = { workspace = true }
 hermes-gsp = { workspace = true }

@@ -213,9 +213,16 @@ fn run_actions(opts: &Opts) {
 }
 
 fn module_loaded(name: &str) -> bool {
+    let underscored = name.replace('-', "_");
     Path::new(&format!("/sys/module/{name}")).exists()
+        || Path::new(&format!("/sys/module/{underscored}")).exists()
         || fs::read_to_string("/proc/modules")
-            .map(|t| t.lines().any(|l| l.split_whitespace().next() == Some(name)))
+            .map(|t| {
+                t.lines().any(|l| {
+                    let m = l.split_whitespace().next();
+                    m == Some(name) || m == Some(underscored.as_str())
+                })
+            })
             .unwrap_or(false)
 }
 

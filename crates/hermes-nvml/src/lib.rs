@@ -1160,9 +1160,233 @@ pub extern "C" fn nvmlDeviceSetPersistenceMode(
     })
 }
 
+/// Encoder utilization (subset). Online-only.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NvmlEncoderUtilization_t {
+    pub sampling_period_us: u32,
+    pub video: u32,
+    pub h264: u32,
+    pub hevc: u32,
+}
+
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetEncoderUtilization(
+    device: NvmlDevice_t,
+    utilization: *mut u32,
+    sampling_period_us: *mut u32,
+) -> NvmlReturn {
+    if utilization.is_null() || sampling_period_us.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        let idx = match handle_to_index(device) {
+            Some(i) if i < s.gpus.len() => i,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        if !s.gpus[idx].manifold.is_online() {
+            return NVML_ERROR_NOT_SUPPORTED;
+        }
+        unsafe {
+            *utilization = 0;
+            *sampling_period_us = 1_000_000;
+        }
+        NVML_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetEncoderCapacity(
+    device: NvmlDevice_t,
+    _encoder_query_type: u32,
+    capacity: *mut u32,
+) -> NvmlReturn {
+    if capacity.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        let idx = match handle_to_index(device) {
+            Some(i) if i < s.gpus.len() => i,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        if !s.gpus[idx].manifold.is_online() {
+            return NVML_ERROR_NOT_SUPPORTED;
+        }
+        unsafe {
+            *capacity = 100;
+        }
+        NVML_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetEncoderSessions(
+    device: NvmlDevice_t,
+    session_count: *mut u32,
+    _sessions: *mut u8,
+) -> NvmlReturn {
+    if session_count.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        let idx = match handle_to_index(device) {
+            Some(i) if i < s.gpus.len() => i,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        if !s.gpus[idx].manifold.is_online() {
+            return NVML_ERROR_NOT_SUPPORTED;
+        }
+        unsafe {
+            *session_count = 0;
+        }
+        NVML_SUCCESS
+    })
+}
+
+/// Frame Buffer Capture (FBC) session count — Online-only, empty table is honest.
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetFBCSessions(
+    device: NvmlDevice_t,
+    session_count: *mut u32,
+    _sessions: *mut u8,
+) -> NvmlReturn {
+    if session_count.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        let idx = match handle_to_index(device) {
+            Some(i) if i < s.gpus.len() => i,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        if !s.gpus[idx].manifold.is_online() {
+            return NVML_ERROR_NOT_SUPPORTED;
+        }
+        unsafe {
+            *session_count = 0;
+        }
+        NVML_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetFBCStats(
+    device: NvmlDevice_t,
+    stats: *mut u8,
+) -> NvmlReturn {
+    if stats.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        let idx = match handle_to_index(device) {
+            Some(i) if i < s.gpus.len() => i,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        if !s.gpus[idx].manifold.is_online() {
+            return NVML_ERROR_NOT_SUPPORTED;
+        }
+        // Zero-fill a minimal 16-byte stats shell.
+        unsafe {
+            core::ptr::write_bytes(stats, 0, 16);
+        }
+        NVML_SUCCESS
+    })
+}
+
+/// vGPU mode — physical GPU reports non-vGPU (fail-closed, not inventing vGPU).
+pub const NVML_DEVICE_VGPU_CAPABILITY_NONE: u32 = 0;
+
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetVirtualizationMode(
+    device: NvmlDevice_t,
+    p_mode: *mut u32,
+) -> NvmlReturn {
+    if p_mode.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        if handle_to_index(device).map(|i| i < s.gpus.len()) != Some(true) {
+            return NVML_ERROR_INVALID_ARGUMENT;
+        }
+        // 0 = None (physical)
+        unsafe {
+            *p_mode = 0;
+        }
+        NVML_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetVgpuCapabilities(
+    device: NvmlDevice_t,
+    _capability: u32,
+    result: *mut u32,
+) -> NvmlReturn {
+    if result.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        if handle_to_index(device).map(|i| i < s.gpus.len()) != Some(true) {
+            return NVML_ERROR_INVALID_ARGUMENT;
+        }
+        unsafe {
+            *result = 0; // not a vGPU host in Hermes physical path
+        }
+        NVML_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetProcessUtilization(
+    device: NvmlDevice_t,
+    _utilization: *mut u8,
+    process_samples_count: *mut u32,
+    _last_seen_time_stamp: u64,
+) -> NvmlReturn {
+    if process_samples_count.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        let idx = match handle_to_index(device) {
+            Some(i) if i < s.gpus.len() => i,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        if !s.gpus[idx].manifold.is_online() {
+            return NVML_ERROR_NOT_SUPPORTED;
+        }
+        unsafe {
+            *process_samples_count = 0;
+        }
+        NVML_SUCCESS
+    })
+}
+
 /// Entry-point count for drop-in dashboards.
 pub fn hermes_nvml_entry_count() -> usize {
-    40
+    52
 }
 
 #[no_mangle]

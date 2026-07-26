@@ -12,7 +12,7 @@ cargo run -p hermes-ctl --bin hermes-ctl -- dropin-complete
 ```
 
 `dropin-parity` reports named-surface coverage against `DROP_IN_PARITY_TARGET`
-(currently **24** catalog entries = 100% of the advertised open-stack name set).
+(currently **28** catalog entries = 100% of the advertised open-stack name set).
 
 | Component | Role |
 |---|---|
@@ -68,11 +68,21 @@ nvidia-smi --hermes-sim-online --query-gpu=name,brand,fan.speed \
 ```sh
 cargo run -p hermes-ctl --bin hermes-ctl -- chardev-smoke
 cargo run -p hermes-ctl --bin hermes-ctl -- kmod-status
+# Root: load modules + prove real ioctl
+sudo sh scripts/load-kmod.sh
+cargo run -p hermes-ctl --bin hermes-ctl -- kmod-load-smoke
 ```
 
 Reports `/sys/module/nvidia*` and `/dev/nvidia*` honestly. When the Hermes
 `nvidia.ko` is loaded, ioctl/read of `/dev/nvidiactl` returns `HermesCtlStatus`
-(never invents Online without kernel phase Online).
+(never invents Online without kernel phase Online). `load-kmod.sh` insmods
+`linux/kmod/*.ko` and runs a Python ioctl probe on the live chardev.
+
+### DRM EDID via kmod
+
+With `nvidia-drm.ko` loaded, `HERMES_DRM_IOCTL_GET_EDID` / `GET_PROP` return a
+checksummed synthetic base EDID and property shell (Online-gated in logic;
+bare load stays Offline → `-ENODEV`).
 
 ### nvidia-settings
 

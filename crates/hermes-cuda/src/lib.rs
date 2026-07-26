@@ -97,6 +97,14 @@ struct Event {
     completed: bool,
 }
 
+#[derive(Clone, Debug)]
+struct IpcExport {
+    handle_key: u64,
+    buffer_id: u64,
+    #[allow(dead_code)]
+    bytes: usize,
+}
+
 #[derive(Default)]
 struct CudaState {
     driver_init: bool,
@@ -114,6 +122,8 @@ struct CudaState {
     events: Vec<Event>,
     /// Enabled peer pairs (device_a, device_b) after EnablePeerAccess.
     peer_enabled: Vec<(u32, u32)>,
+    /// Software IPC exports (key → buffer).
+    ipc_exports: Vec<IpcExport>,
 }
 
 static STATE: Mutex<CudaState> = Mutex::new(CudaState {
@@ -130,6 +140,7 @@ static STATE: Mutex<CudaState> = Mutex::new(CudaState {
     streams: Vec::new(),
     events: Vec::new(),
     peer_enabled: Vec::new(),
+    ipc_exports: Vec::new(),
 });
 
 fn with_state<F, R>(f: F) -> R
@@ -168,6 +179,7 @@ pub fn hermes_cuda_set_gsp_online(online: bool) {
             s.streams.clear();
             s.events.clear();
             s.peer_enabled.clear();
+            s.ipc_exports.clear();
             s.driver_init = false;
         }
     });
@@ -227,6 +239,7 @@ pub fn hermes_cuda_reset() {
         s.streams.clear();
         s.events.clear();
         s.peer_enabled.clear();
+        s.ipc_exports.clear();
         s.next_handle = 1;
     });
 }
@@ -721,8 +734,17 @@ pub const CU_DEVICE_ATTRIBUTE_L2_CACHE_SIZE: i32 = 38;
 pub const CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_MULTIPROCESSOR: i32 = 39;
 pub const CU_DEVICE_ATTRIBUTE_ASYNC_ENGINE_COUNT: i32 = 40;
 pub const CU_DEVICE_ATTRIBUTE_UNIFIED_ADDRESSING: i32 = 41;
+pub const CU_DEVICE_ATTRIBUTE_MANAGED_MEMORY: i32 = 83;
+pub const CU_DEVICE_ATTRIBUTE_CONCURRENT_MANAGED_ACCESS: i32 = 89;
+pub const CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS: i32 = 90;
+pub const CU_DEVICE_ATTRIBUTE_CAN_USE_HOST_POINTER_FOR_REGISTERED_MEM: i32 = 91;
 pub const CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR: i32 = 75;
 pub const CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR: i32 = 76;
+pub const CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_MULTIPROCESSOR: i32 = 81;
+pub const CU_DEVICE_ATTRIBUTE_HOST_NATIVE_ATOMIC_SUPPORTED: i32 = 97;
+pub const CU_DEVICE_ATTRIBUTE_SINGLE_TO_DOUBLE_PRECISION_PERF_RATIO: i32 = 98;
+pub const CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES: i32 = 99;
+pub const CU_DEVICE_ATTRIBUTE_DIRECT_MANAGED_MEM_ACCESS_FROM_HOST: i32 = 100;
 
 #[no_mangle]
 pub extern "C" fn cuDeviceGetAttribute(
@@ -768,6 +790,15 @@ pub extern "C" fn cuDeviceGetAttribute(
             CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_MULTIPROCESSOR => 1024,
             CU_DEVICE_ATTRIBUTE_ASYNC_ENGINE_COUNT => 3,
             CU_DEVICE_ATTRIBUTE_UNIFIED_ADDRESSING => 1,
+            CU_DEVICE_ATTRIBUTE_MANAGED_MEMORY => 1,
+            CU_DEVICE_ATTRIBUTE_CONCURRENT_MANAGED_ACCESS => 1,
+            CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS => 1,
+            CU_DEVICE_ATTRIBUTE_CAN_USE_HOST_POINTER_FOR_REGISTERED_MEM => 1,
+            CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_MULTIPROCESSOR => 65536,
+            CU_DEVICE_ATTRIBUTE_HOST_NATIVE_ATOMIC_SUPPORTED => 1,
+            CU_DEVICE_ATTRIBUTE_SINGLE_TO_DOUBLE_PRECISION_PERF_RATIO => 32,
+            CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES => 0,
+            CU_DEVICE_ATTRIBUTE_DIRECT_MANAGED_MEM_ACCESS_FROM_HOST => 0,
             CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR => dev.compute_major as i32,
             CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR => dev.compute_minor as i32,
             _ => return CUDA_ERROR_INVALID_VALUE,
@@ -1042,6 +1073,184 @@ pub extern "C" fn cudaMemcpyPeer(
     count: usize,
 ) -> CudaResult {
     cuMemcpyPeer(dst, dst_device, src, src_device, count)
+}
+
+/// IPC mem handle (opaque 64-byte shell — software export of device buffer id).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct CUipcMemHandle {
+    pub reserved: [u8; 64],
+}
+
+impl Default for CUipcMemHandle {
+    fn default() -> Self {
+        Self { reserved: [0; 64] }
+    }
+}
+
+fn ipc_key_from_handle(h: &CUipcMemHandle) -> u64 {
+    u64::from_le_bytes([
+        h.reserved[0],
+        h.reserved[1],
+        h.reserved[2],
+        h.reserved[3],
+        h.reserved[4],
+        h.reserved[5],
+        h.reserved[6],
+        h.reserved[7],
+    ])
+}
+
+fn ipc_handle_from_key(key: u64) -> CUipcMemHandle {
+    let mut h = CUipcMemHandle::default();
+    let b = key.to_le_bytes();
+    h.reserved[..8].copy_from_slice(&b);
+    // Magic tag so random handles fail closed.
+    h.reserved[8..12].copy_from_slice(b"HRMS");
+    h
+}
+
+#[no_mangle]
+pub extern "C" fn cuIpcGetMemHandle(p_handle: *mut CUipcMemHandle, dptr: u64) -> CudaResult {
+    if p_handle.is_null() || dptr == 0 {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    with_state(|s| {
+        let g = require_gsp(s);
+        if g != CUDA_SUCCESS {
+            return g;
+        }
+        let (bid, bytes) = match s.buffers.iter().find(|b| b.id == dptr) {
+            Some(b) => (b.id, b.bytes),
+            None => return CUDA_ERROR_INVALID_VALUE,
+        };
+        let key = next_id(s);
+        s.ipc_exports.push(IpcExport {
+            handle_key: key,
+            buffer_id: bid,
+            bytes,
+        });
+        unsafe {
+            *p_handle = ipc_handle_from_key(key);
+        }
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuIpcOpenMemHandle_v2(
+    pdptr: *mut u64,
+    handle: CUipcMemHandle,
+    _flags: u32,
+) -> CudaResult {
+    if pdptr.is_null() {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    if &handle.reserved[8..12] != b"HRMS" {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    let key = ipc_key_from_handle(&handle);
+    with_state(|s| {
+        let g = require_gsp(s);
+        if g != CUDA_SUCCESS {
+            return g;
+        }
+        let exp = match s.ipc_exports.iter().find(|e| e.handle_key == key) {
+            Some(e) => e.clone(),
+            None => return CUDA_ERROR_INVALID_VALUE,
+        };
+        let src = match s.buffers.iter().find(|b| b.id == exp.buffer_id) {
+            Some(b) => b.clone(),
+            None => return CUDA_ERROR_INVALID_VALUE,
+        };
+        let ctx = match live_ctx(s) {
+            Ok(c) => c,
+            Err(e) => return e,
+        };
+        let id = next_id(s);
+        s.buffers.push(DeviceBuffer {
+            id,
+            ctx,
+            bytes: src.bytes,
+            data: src.data,
+        });
+        unsafe {
+            *pdptr = id;
+        }
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuIpcCloseMemHandle(dptr: u64) -> CudaResult {
+    // Imported handles free like normal device pointers.
+    cuMemFree_v2(dptr)
+}
+
+#[no_mangle]
+pub extern "C" fn cuPointerGetAttribute(
+    data: *mut u8,
+    attribute: u32,
+    ptr: u64,
+) -> CudaResult {
+    if data.is_null() || ptr == 0 {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    // CU_POINTER_ATTRIBUTE_MEMORY_TYPE = 2 → device = 2
+    // CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL = 7
+    // CU_POINTER_ATTRIBUTE_BUFFER_ID = 14 (Hermes: buffer id)
+    with_state(|s| {
+        let g = require_gsp(s);
+        if g != CUDA_SUCCESS {
+            return g;
+        }
+        let buf = match s.buffers.iter().find(|b| b.id == ptr) {
+            Some(b) => b,
+            None => return CUDA_ERROR_INVALID_VALUE,
+        };
+        match attribute {
+            2 => {
+                // MEMORY_TYPE device
+                let v: u32 = 2;
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        &v as *const u32 as *const u8,
+                        data,
+                        4,
+                    );
+                }
+                CUDA_SUCCESS
+            }
+            7 => {
+                let device = s
+                    .contexts
+                    .iter()
+                    .find(|c| c.id == buf.ctx)
+                    .map(|c| c.device as i32)
+                    .unwrap_or(0);
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        &device as *const i32 as *const u8,
+                        data,
+                        4,
+                    );
+                }
+                CUDA_SUCCESS
+            }
+            14 => {
+                let id = buf.id;
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        &id as *const u64 as *const u8,
+                        data,
+                        8,
+                    );
+                }
+                CUDA_SUCCESS
+            }
+            _ => CUDA_ERROR_INVALID_VALUE,
+        }
+    })
 }
 
 #[no_mangle]
@@ -1802,8 +2011,8 @@ pub extern "C" fn cudaRuntimeGetVersion(runtime_version: *mut i32) -> CudaResult
 
 /// Count of driver entry points Hermes currently exports (for drop-in dashboards).
 pub fn hermes_cuda_driver_entry_count() -> usize {
-    // + host alloc, peer memcpy, runtime peer
-    62
+    // + host alloc, peer, IPC, pointer attrs
+    68
 }
 
 pub fn hermes_cuda_host_sort_i32(data: &mut [i32]) {
@@ -2179,6 +2388,46 @@ mod tests {
         assert_eq!(cuMemcpyDtoH_v2(out.as_mut_ptr(), b, 16), CUDA_SUCCESS);
         assert_eq!(out[15], 15);
         assert_eq!(cuMemFreeHost(hp), CUDA_SUCCESS);
+        hermes_cuda_reset();
+    }
+
+    #[test]
+    fn ipc_export_import_and_unified_attrs() {
+        let _g = TEST_LOCK.lock().unwrap();
+        hermes_cuda_reset();
+        hermes_cuda_set_gsp_online(true);
+        assert_eq!(cuInit(0), CUDA_SUCCESS);
+        let mut ctx = 0u64;
+        assert_eq!(cuCtxCreate_v2(&mut ctx, 0, 0), CUDA_SUCCESS);
+        let mut attr = 0i32;
+        assert_eq!(
+            cuDeviceGetAttribute(&mut attr, CU_DEVICE_ATTRIBUTE_UNIFIED_ADDRESSING, 0),
+            CUDA_SUCCESS
+        );
+        assert_eq!(attr, 1);
+        assert_eq!(
+            cuDeviceGetAttribute(&mut attr, CU_DEVICE_ATTRIBUTE_MANAGED_MEMORY, 0),
+            CUDA_SUCCESS
+        );
+        assert_eq!(attr, 1);
+        let mut d = 0u64;
+        assert_eq!(cuMemAlloc_v2(&mut d, 32), CUDA_SUCCESS);
+        assert_eq!(cuMemsetD8_v2(d, 0x5a, 32), CUDA_SUCCESS);
+        let mut h = CUipcMemHandle::default();
+        assert_eq!(cuIpcGetMemHandle(&mut h, d), CUDA_SUCCESS);
+        let mut d2 = 0u64;
+        assert_eq!(cuIpcOpenMemHandle_v2(&mut d2, h, 0), CUDA_SUCCESS);
+        assert_ne!(d2, d);
+        let mut out = [0u8; 32];
+        assert_eq!(cuMemcpyDtoH_v2(out.as_mut_ptr(), d2, 32), CUDA_SUCCESS);
+        assert_eq!(out, [0x5a; 32]);
+        let mut mt = 0u32;
+        assert_eq!(
+            cuPointerGetAttribute((&mut mt as *mut u32) as *mut u8, 2, d),
+            CUDA_SUCCESS
+        );
+        assert_eq!(mt, 2);
+        assert_eq!(cuIpcCloseMemHandle(d2), CUDA_SUCCESS);
         hermes_cuda_reset();
     }
 }

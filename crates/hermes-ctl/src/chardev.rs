@@ -36,9 +36,17 @@ pub struct ChardevProbe {
 }
 
 pub fn module_loaded(name: &str) -> bool {
+    // Kernel module names use '_' where the .ko filename may use '-'.
+    let underscored = name.replace('-', "_");
     Path::new(&format!("/sys/module/{name}")).exists()
+        || Path::new(&format!("/sys/module/{underscored}")).exists()
         || fs::read_to_string("/proc/modules")
-            .map(|t| t.lines().any(|l| l.split_whitespace().next() == Some(name)))
+            .map(|t| {
+                t.lines().any(|l| {
+                    let m = l.split_whitespace().next();
+                    m == Some(name) || m == Some(underscored.as_str())
+                })
+            })
             .unwrap_or(false)
 }
 
@@ -285,6 +293,83 @@ pub fn smoke() -> i32 {
     assert_eq!(parsed.phase_label(), "OFFLINE");
     println!("parse canned offline line: PASS");
     println!("chardev-smoke: PASS");
+    0
+}
+
+/// Prefer real ioctl prove when modules loaded; else invoke `scripts/load-kmod.sh`.
+pub fn kmod_load_smoke() -> i32 {
+    println!("=== kmod-load-smoke: load nvidia*.ko + prove /dev/nvidiactl ioctl ===");
+    let already = module_loaded("nvidia") && Path::new("/dev/nvidiactl").exists();
+    if already {
+        println!("nvidia.ko already loaded; proving ioctl");
+        // Best-effort chmod if we can.
+        let _ = std::process::Command::new("sudo")
+            .args(["-n", "chmod", "666", "/dev/nvidiactl", "/dev/nvidia0"])
+            .status();
+    } else {
+        let script = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../scripts/load-kmod.sh");
+        let script = script.canonicalize().unwrap_or(script);
+        println!("running {}", script.display());
+        let st = std::process::Command::new("sh")
+            .arg(&script)
+            .status();
+        match st {
+            Ok(s) if s.success() => {}
+            Ok(s) => {
+                eprintln!("load-kmod.sh exited {s}");
+                return 1;
+            }
+            Err(e) => {
+                eprintln!("failed to run load-kmod.sh: {e}");
+                return 1;
+            }
+        }
+    }
+
+    let p = probe();
+    print_probe(&p);
+    if !module_loaded("nvidia") {
+        eprintln!("error: nvidia module still not loaded");
+        return 1;
+    }
+    if !Path::new("/dev/nvidiactl").exists() {
+        eprintln!("error: /dev/nvidiactl missing after load");
+        return 1;
+    }
+    match &p.ctl_status {
+        Some(st) => {
+            println!(
+                "live ioctl: online={} phase={} ver={} mask={:?}",
+                st.is_online(),
+                st.phase_label(),
+                st.version,
+                st.modules_listed()
+            );
+            if st.version < 2 {
+                eprintln!("error: bad status version");
+                return 1;
+            }
+            if st.is_online() && st.phase != 5 {
+                eprintln!("error: invented Online with wrong phase");
+                return 1;
+            }
+            // Bare insmod without full evidence should be Offline.
+            if st.is_online() {
+                println!("note: Online reported (unexpected on bare load) — still phase-checked");
+            } else {
+                println!("fail-closed Offline after bare load: PASS");
+            }
+        }
+        None => {
+            eprintln!(
+                "error: ioctl/read failed: {}",
+                p.ctl_error.as_deref().unwrap_or("unknown")
+            );
+            return 1;
+        }
+    }
+    println!("kmod-load-smoke: PASS");
     0
 }
 

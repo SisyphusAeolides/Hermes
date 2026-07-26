@@ -90,6 +90,42 @@ static long hermes_drm_ioctl(struct file *file, unsigned int cmd, unsigned long 
 			err = -EINVAL;
 		break;
 	}
+	case HERMES_DRM_IOCTL_GET_EDID: {
+		struct hermes_drm_edid edid;
+
+		if (copy_from_user(&edid, (void __user *)arg, sizeof(edid))) {
+			err = -EFAULT;
+			break;
+		}
+		err = hermes_drm_logic_get_edid(&hermes_drm_state, &edid);
+		if (err == HERMES_DRM_E_GSP_OFFLINE)
+			err = -ENODEV;
+		else if (err == HERMES_DRM_E_INVAL)
+			err = -EINVAL;
+		else if (err)
+			err = -EIO;
+		else if (copy_to_user((void __user *)arg, &edid, sizeof(edid)))
+			err = -EFAULT;
+		break;
+	}
+	case HERMES_DRM_IOCTL_GET_PROP: {
+		struct hermes_drm_prop_get prop;
+
+		if (copy_from_user(&prop, (void __user *)arg, sizeof(prop))) {
+			err = -EFAULT;
+			break;
+		}
+		err = hermes_drm_logic_get_prop(&hermes_drm_state, &prop);
+		if (err == HERMES_DRM_E_GSP_OFFLINE)
+			err = -ENODEV;
+		else if (err == HERMES_DRM_E_INVAL)
+			err = -EINVAL;
+		else if (err)
+			err = -EIO;
+		else if (copy_to_user((void __user *)arg, &prop, sizeof(prop)))
+			err = -EFAULT;
+		break;
+	}
 	default:
 		err = -ENOTTY;
 		break;

@@ -10,6 +10,7 @@
 #include <linux/device.h>
 #include <linux/uaccess.h>
 #include <linux/mutex.h>
+#include <linux/version.h>
 
 #include "include/hermes_kmod.h"
 #include "include/hermes_ctl_uapi.h"
@@ -29,6 +30,17 @@ static dev_t hermes_char_devt;
 static struct class *hermes_char_class;
 static struct cdev hermes_char_cdev;
 static DEFINE_MUTEX(hermes_char_lock);
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 2, 0)
+static char *hermes_char_devnode(const struct device *dev, umode_t *mode)
+#else
+static char *hermes_char_devnode(struct device *dev, umode_t *mode)
+#endif
+{
+	if (mode)
+		*mode = 0666;
+	return NULL;
+}
 
 static int hermes_char_open(struct inode *inode, struct file *file)
 {
@@ -116,6 +128,7 @@ int hermes_chardev_init(void)
 		err = PTR_ERR(hermes_char_class);
 		goto err_cdev;
 	}
+	hermes_char_class->devnode = hermes_char_devnode;
 
 	for (i = 0; i < HERMES_CHAR_COUNT; i++) {
 		const char *name = (i == 0) ? HERMES_CHAR_NAME_CTL : HERMES_CHAR_NAME_0;

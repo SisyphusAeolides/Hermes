@@ -26,7 +26,8 @@ mkdir -p \
   "$PREFIX/share/glvnd/egl_vendor.d"
 
 # Binaries (classic NVIDIA names + Hermes control)
-for b in hermes-ctl nvidia-smi nvidia-settings hermes-settings nvidia-modprobe nvidia-persistenced; do
+for b in hermes-ctl nvidia-smi nvidia-settings hermes-settings nvidia-modprobe \
+         nvidia-persistenced nvidia-cuda-mps-control nvidia-debugdump; do
   if [ -f "$TARGET/$b" ]; then
     install -m 0755 "$TARGET/$b" "$PREFIX/bin/$b"
     printf '  bin/%s\n' "$b"
@@ -62,7 +63,9 @@ if [ -n "$ml" ]; then
   base=$(basename "$ml")
   ln -sfn "$base" "$PREFIX/lib/libnvidia-ml.so.1"
   ln -sfn "$base" "$PREFIX/lib/libnvidia-ml.so"
-  printf '  lib/libnvidia-ml.so.1 -> %s\n' "$base"
+  ln -sfn "$base" "$PREFIX/lib/libnvidia-cfg.so.1"
+  ln -sfn "$base" "$PREFIX/lib/libnvidia-cfg.so"
+  printf '  lib/libnvidia-ml.so.1 + libnvidia-cfg.so.1 -> %s\n' "$base"
 fi
 cu=$(pick_one "$PREFIX/lib"/libhermes_cuda.so*)
 if [ -n "$cu" ]; then

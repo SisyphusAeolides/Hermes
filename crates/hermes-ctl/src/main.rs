@@ -117,10 +117,13 @@ fn main() {
         Some("chardev-smoke") | Some("kmod-status") => {
             std::process::exit(chardev::smoke());
         }
+        Some("kmod-load-smoke") => {
+            std::process::exit(chardev::kmod_load_smoke());
+        }
         _ => {
             println!("hermes-ctl — Hermes GSP control\n");
             println!(
-                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online|deep> | drm-smoke <offline|online|dual|gem|edid> | mesa-smoke <offline|online|gem> | stack-smoke | icd-json | silicon-probe [fwroot] | host-bar | mailbox-smoke | silicon-bringup <sim|live-fw|fail-mailbox|host-block> | session-smoke | session-promote | smi-smoke <host|online> | chardev-smoke | kmod-status | dropin-catalog | dropin-parity | dropin-complete"
+                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online|deep> | drm-smoke <offline|online|dual|gem|edid> | mesa-smoke <offline|online|gem> | stack-smoke | icd-json | silicon-probe [fwroot] | host-bar | mailbox-smoke | silicon-bringup <sim|live-fw|fail-mailbox|host-block> | session-smoke | session-promote | smi-smoke <host|online> | chardev-smoke | kmod-status | kmod-load-smoke | dropin-catalog | dropin-parity | dropin-complete"
             );
         }
     }
