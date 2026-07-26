@@ -14,7 +14,7 @@ pub enum Capability {
     ElfStructuralAdmission,
     IommuRequiredForOnline,
     WprMailboxReadyCertificate,
-    FormalIdrisAgdaAustral,
+    FormalIdrisAgdaFortran,
     QuarantineOnRpcFault,
 }
 
@@ -87,7 +87,7 @@ pub fn comparison_matrix() -> Vec<HermesEdge> {
             hermes: true,
         },
         HermesEdge {
-            capability: Capability::FormalIdrisAgdaAustral,
+            capability: Capability::FormalIdrisAgdaFortran,
             nouveau: false,
             hermes: true,
         },

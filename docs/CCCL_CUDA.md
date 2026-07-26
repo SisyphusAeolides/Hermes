@@ -69,4 +69,4 @@ cargo run -p hermes-ctl --bin hermes-ctl -- cuda-smoke deep
 
 - `formal/idris2/Cccl.idr`, `formal/idris2/CudaStream.idr`
 - `formal/agda/Cccl.agda`
-- `formal/austral/Cccl.aui` + `Cccl.aum` (linear driver/context/buffer)
+- `formal/fortran/hermes_cccl.f90` (exclusive driver/context/buffer handles)

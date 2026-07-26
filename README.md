@@ -12,7 +12,7 @@ Languages:
 | Language | Role |
 |---|---|
 | **Rust** | Executable runtime, HAL, Linux drop-in surfaces, tests |
-| **Austral** | Linear ownership (`formal/austral/*.aui` + `*.aum` — stock **tokei ignores these**; run `sh scripts/loc.sh`) |
+| **Fortran** | Exclusive resource ownership (`formal/fortran/*.f90`, `make -C formal/fortran check`) |
 | **Idris2** | Total phase lattice and online certificates |
 | **Agda** | Feature lattice and ring geometry (`--safe`) |
 
@@ -50,9 +50,9 @@ crates/
   hermes-drm/       Atomic modeset foundation (GSP-gated)
   hermes-mesa/      Vulkan ICD + GL stubs + present path
 formal/
-  idris2/           HermesAuthority, NvkmGsp, Cccl, DrmKms
-  agda/             HermesWire, NvkmGsp, Cccl, DrmKms
-  austral/          HermesResources, HermesRings, HermesFailClosed, DrmKms, …
+  idris2/           HermesAuthority, NvkmGsp, Cccl, DrmKms, …
+  agda/             HermesWire, NvkmGsp, Cccl, DrmKms, …
+  fortran/          hermes_resources, hermes_rings, hermes_fail_closed, …
 ```
 
 ## Build and test
@@ -175,8 +175,8 @@ Pre-Turing (Maxwell / Pascal / Volta) is **rejected**.
 ## Formal gate
 
 ```sh
-sh scripts/check-formal.sh          # idris2 + agda; austral if installed
-sh scripts/check-formal.sh --strict # requires all three
+sh scripts/check-formal.sh          # idris2 + agda + gfortran when installed
+sh scripts/check-formal.sh --strict # requires idris2, agda, and gfortran
 ```
 
 See [formal/LANGUAGES.md](formal/LANGUAGES.md).

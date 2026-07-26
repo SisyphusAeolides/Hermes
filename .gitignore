@@ -21,6 +21,7 @@ staging/
 .cargo-cache/
 formal/idris2/build/
 formal/agda/*.agdai
+formal/fortran/build/
 *.o
 *.so
 *.a

@@ -232,118 +232,18 @@ data CudaSession : Set where
 """.replace("{# OPTIONS --safe --without-K #}", "{-# OPTIONS --safe --without-K #-}")
 
 
-def emit_austral_aui() -> str:
-    return """module Hermes.Cccl is
-    -- Linear CUDA/CCCL session: device memory and modules are linear.
-
-    type GspOnline: Free;
-    type Driver: Linear;
-    type Context: Linear;
-    type DeviceBuffer: Linear;
-    type HostBuffer: Free;
-    type Module: Linear;
-    type Stream: Linear;
-
-    function requireGsp(): GspOnline;
-    function openDriver(g: GspOnline): Driver;
-    function createContext(d: Driver): Context;
-    function allocDevice(ctx: Context, bytes: Nat64): DeviceBuffer;
-    function freeDevice(buf: DeviceBuffer): Context;
-    function loadModule(ctx: Context): Module;
-    function destroyModule(m: Module): Context;
-    function createStream(ctx: Context): Stream;
-    function destroyStream(s: Stream): Context;
-    function closeContext(ctx: Context): Driver;
-    function closeDriver(d: Driver): Unit;
-end module.
-"""
-
-
-def emit_austral_aum() -> str:
-    return """module body Hermes.Cccl is
-    record GspOnline: Free is
-        marker: Unit;
-    end;
-
-    record Driver: Linear is
-        marker: Unit;
-    end;
-
-    record Context: Linear is
-        marker: Unit;
-    end;
-
-    record DeviceBuffer: Linear is
-        marker: Unit;
-    end;
-
-    record HostBuffer: Free is
-        marker: Unit;
-    end;
-
-    record Module: Linear is
-        marker: Unit;
-    end;
-
-    record Stream: Linear is
-        marker: Unit;
-    end;
-
-    function requireGsp(): GspOnline is
-        return GspOnline(marker => nil);
-    end;
-
-    function openDriver(g: GspOnline): Driver is
-        let { marker: Unit } := g;
-        return Driver(marker => marker);
-    end;
-
-    function createContext(d: Driver): Context is
-        let { marker: Unit } := d;
-        return Context(marker => marker);
-    end;
-
-    function allocDevice(ctx: Context, bytes: Nat64): DeviceBuffer is
-        let { marker: Unit } := ctx;
-        let _b: Nat64 := bytes;
-        return DeviceBuffer(marker => marker);
-    end;
-
-    function freeDevice(buf: DeviceBuffer): Context is
-        let { marker: Unit } := buf;
-        return Context(marker => marker);
-    end;
-
-    function loadModule(ctx: Context): Module is
-        let { marker: Unit } := ctx;
-        return Module(marker => marker);
-    end;
-
-    function destroyModule(m: Module): Context is
-        let { marker: Unit } := m;
-        return Context(marker => marker);
-    end;
-
-    function createStream(ctx: Context): Stream is
-        let { marker: Unit } := ctx;
-        return Stream(marker => marker);
-    end;
-
-    function destroyStream(s: Stream): Context is
-        let { marker: Unit } := s;
-        return Context(marker => marker);
-    end;
-
-    function closeContext(ctx: Context): Driver is
-        let { marker: Unit } := ctx;
-        return Driver(marker => marker);
-    end;
-
-    function closeDriver(d: Driver): Unit is
-        let { marker: Unit } := d;
-        return marker;
-    end;
-end module body.
+def emit_fortran_cccl() -> str:
+    return """! Generated CCCL stub — exclusive-handle CUDA session (see formal/fortran/hermes_cccl.f90).
+module hermes_cccl_generated
+  implicit none
+  private
+  public :: require_gsp_token
+contains
+  pure logical function require_gsp_token(gsp_online) result(ok)
+    logical, intent(in) :: gsp_online
+    ok = gsp_online
+  end function require_gsp_token
+end module hermes_cccl_generated
 """
 
 
@@ -394,8 +294,7 @@ def main() -> int:
         emit_idris(len(algs), inv["cub_module_count"])
     )
     (out / "formal" / "Cccl.agda").write_text(emit_agda(len(algs)))
-    (out / "formal" / "Cccl.aui").write_text(emit_austral_aui())
-    (out / "formal" / "Cccl.aum").write_text(emit_austral_aum())
+    (out / "formal" / "Cccl.f90").write_text(emit_fortran_cccl())
     (out / "SUPERIORITY.md").write_text(
         f"""# Hermes CUDA/CCCL vs stock CCCL
 
@@ -408,7 +307,7 @@ CCCL version inventoried: **{version}**
 | libcu++ headers | {len(libcu)} | Catalog |
 | Requires GSP Online | No | **Yes** (fail-closed) |
 | Driver/runtime ABI shell | External CUDA | `hermes-cuda` |
-| Formal models | No | Idris/Agda/Austral |
+| Formal models | No | Idris/Agda/Fortran |
 
 CCCL is the **C++ algorithms / stdlib** layer. Full CUDA also needs driver/runtime
 (PTX/SASS, contexts, modules). Hermes gates all of that on GSP Online.

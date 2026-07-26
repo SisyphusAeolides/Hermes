@@ -132,7 +132,7 @@ fn parse_hex(s: &str) -> u16 {
 fn status() {
     println!("Hermes GSP 0.1.0");
     println!("Scope: NVIDIA Turing and newer (open-gpu-kernel-modules GSP path)");
-    println!("Languages: Rust, Austral, Idris2, Agda");
+    println!("Languages: Rust, Fortran, Idris2, Agda");
     println!("Primary module: {}", modules::NVIDIA);
     println!("Manifold default: {}", HermesManifold::dark(0).phase.label());
     println!("Kmod tree: linux/kmod (nvidia, nvidia-modeset, nvidia-uvm, nvidia-drm, nvidia-peermem)");

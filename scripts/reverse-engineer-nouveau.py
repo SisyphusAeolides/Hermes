@@ -9,7 +9,7 @@ Outputs (under --out, default: generated/nouveau-re/):
   - superiority.md          Hermes vs Nouveau fail-closed comparison
   - formal/NvkmGsp.idr      Idris total phase model
   - formal/NvkmGsp.agda     Agda safe engine lattice
-  - formal/NvkmGsp.aui/.aum Austral linear firmware bundle
+  - formal/NvkmGsp.f90      Fortran exclusive-handle stub (see formal/fortran/)
 
 This does NOT claim binary decompilation of every DRM mode-set path. It
 extracts the public GSP/NVKM architecture and firmware binding tables from
@@ -324,159 +324,21 @@ data Online : Set where
 """
 
 
-def emit_austral_aui() -> str:
-    return """module Hermes.NvkmGsp is
-    -- Linear Nouveau-shaped GSP firmware bundle (clean-room).
-    type Chip: Free;
-    type Version: Free;
-    type BooterLoad: Linear;
-    type BooterUnload: Linear;
-    type Bootloader: Linear;
-    type Fmc: Linear;
-    type GspRm: Linear;
-    type Bundle: Linear;
-    type Online: Linear;
-
-    function chip(): Chip;
-    function version(): Version;
-
-    function loadBooterLoad(): BooterLoad;
-    function loadBooterUnload(): BooterUnload;
-    function loadBootloader(): Bootloader;
-    function loadFmc(): Fmc;
-    function loadGspRm(): GspRm;
-
-    function assembleBooter(
-        load: BooterLoad,
-        unload: BooterUnload,
-        bl: Bootloader,
-        rm: GspRm
-    ): Bundle;
-
-    function assembleFmc(
-        fmc: Fmc,
-        bl: Bootloader,
-        rm: GspRm
-    ): Bundle;
-
-    function hermesIgnite(bundle: Bundle): Online;
-    function releaseOnline(session: Online): Unit;
-end module.
-"""
-
-
-def emit_austral_aum() -> str:
-    return """module body Hermes.NvkmGsp is
-    record Chip: Free is
-        marker: Unit;
-    end;
-
-    record Version: Free is
-        marker: Unit;
-    end;
-
-    record BooterLoad: Linear is
-        marker: Unit;
-    end;
-
-    record BooterUnload: Linear is
-        marker: Unit;
-    end;
-
-    record Bootloader: Linear is
-        marker: Unit;
-    end;
-
-    record Fmc: Linear is
-        marker: Unit;
-    end;
-
-    record GspRm: Linear is
-        marker: Unit;
-    end;
-
-    record Bundle: Linear is
-        marker: Unit;
-    end;
-
-    record Online: Linear is
-        marker: Unit;
-    end;
-
-    function chip(): Chip is
-        return Chip(marker => nil);
-    end;
-
-    function version(): Version is
-        return Version(marker => nil);
-    end;
-
-    function loadBooterLoad(): BooterLoad is
-        return BooterLoad(marker => nil);
-    end;
-
-    function loadBooterUnload(): BooterUnload is
-        return BooterUnload(marker => nil);
-    end;
-
-    function loadBootloader(): Bootloader is
-        return Bootloader(marker => nil);
-    end;
-
-    function loadFmc(): Fmc is
-        return Fmc(marker => nil);
-    end;
-
-    function loadGspRm(): GspRm is
-        return GspRm(marker => nil);
-    end;
-
-    function assembleBooter(
-        load: BooterLoad,
-        unload: BooterUnload,
-        bl: Bootloader,
-        rm: GspRm
-    ): Bundle is
-        let { marker: Unit } := load;
-        let a: Unit := marker;
-        let { marker: Unit } := unload;
-        let b: Unit := marker;
-        let { marker: Unit } := bl;
-        let c: Unit := marker;
-        let { marker: Unit } := rm;
-        let d: Unit := marker;
-        let _b: Unit := b;
-        let _c: Unit := c;
-        let _d: Unit := d;
-        return Bundle(marker => a);
-    end;
-
-    function assembleFmc(
-        fmc: Fmc,
-        bl: Bootloader,
-        rm: GspRm
-    ): Bundle is
-        let { marker: Unit } := fmc;
-        let a: Unit := marker;
-        let { marker: Unit } := bl;
-        let b: Unit := marker;
-        let { marker: Unit } := rm;
-        let c: Unit := marker;
-        let _b: Unit := b;
-        let _c: Unit := c;
-        return Bundle(marker => a);
-    end;
-
-    function hermesIgnite(bundle: Bundle): Online is
-        let { marker: Unit } := bundle;
-        return Online(marker => marker);
-    end;
-
-    function releaseOnline(session: Online): Unit is
-        let { marker: Unit } := session;
-        return marker;
-    end;
-end module body.
+def emit_fortran_nvkm() -> str:
+    return """! Generated NvkmGsp stub — exclusive-handle firmware bundle (see formal/fortran/).
+! Prefer the in-tree hermes_nvkm_gsp.f90 module for the live formal gate.
+module hermes_nvkm_gsp_generated
+  implicit none
+  private
+  public :: chip_id_gen, version_tag_gen
+contains
+  pure integer function chip_id_gen() result(c)
+    c = int(z'1fb9')
+  end function chip_id_gen
+  pure integer function version_tag_gen() result(v)
+    v = 6104303
+  end function version_tag_gen
+end module hermes_nvkm_gsp_generated
 """
 
 
@@ -500,9 +362,9 @@ Source inventory: **{inv['file_count']}** files, **{inv['total_lines']}** lines 
 | Missing firmware | Often probe error (`gsp ctor failed`) after partial bind | **Fail-closed admission** before Online; no invented GPU |
 | Firmware identity | Path/version load | Path + **SHA-256 pin** + **ELF structure** (`.fwimage`/`.fwversion`) |
 | Online publication | Running flag after RM path | **Manifold certificate** (IOMMU+WPR+mailbox+ready+features) |
-| Languages | C | Rust + Austral + Idris + Agda |
+| Languages | C | Rust + Fortran + Idris + Agda |
 | Drop-in NVIDIA names | DRM `nouveau` | Parallel `nvidia*` personality **and** Nouveau-shaped DRM model |
-| Formal gates | Implicit | Explicit total/safe/linear models |
+| Formal gates | Implicit | Explicit total/safe/exclusive-handle models |
 
 ## Shared truth with Nouveau
 
@@ -553,8 +415,7 @@ def main() -> int:
     (out / "superiority.md").write_text(emit_superiority(manifest, inv))
     (out / "formal" / "NvkmGsp.idr").write_text(emit_idris(manifest))
     (out / "formal" / "NvkmGsp.agda").write_text(emit_agda(manifest))
-    (out / "formal" / "NvkmGsp.aui").write_text(emit_austral_aui())
-    (out / "formal" / "NvkmGsp.aum").write_text(emit_austral_aum())
+    (out / "formal" / "NvkmGsp.f90").write_text(emit_fortran_nvkm())
 
     print(f"wrote {out}")
     print(f"  files={inv['file_count']} lines={inv['total_lines']}")

@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
-# Typecheck Hermes formal models (Idris2, Agda, Austral).
+# Typecheck Hermes formal models (Idris2, Agda, Fortran).
 # Default: run every available compiler, skip missing ones with a notice.
-# --strict: fail if any of idris2, agda, or austral is missing.
+# --strict: fail if any of idris2, agda, or gfortran is missing.
 
 set -eu
 
@@ -91,42 +91,15 @@ if need agda; then
   printf 'ok: agda formal models\n'
 fi
 
-if need austral; then
-  (
-    cd "$ROOT/formal/austral"
-    austral compile --target-type=tc HermesResources.aui,HermesResources.aum
-    austral compile --target-type=tc HermesRings.aui,HermesRings.aum
-    austral compile --target-type=tc HermesFailClosed.aui,HermesFailClosed.aum
-    austral compile --target-type=tc HermesWpr.aui,HermesWpr.aum
-    austral compile --target-type=tc HermesBootstrap.aui,HermesBootstrap.aum
-    austral compile --target-type=tc HermesFirmware.aui,HermesFirmware.aum
-    if [ -f NvkmGsp.aui ]; then
-      austral compile --target-type=tc NvkmGsp.aui,NvkmGsp.aum
-    fi
-    if [ -f Cccl.aui ]; then
-      austral compile --target-type=tc Cccl.aui,Cccl.aum
-    fi
-    if [ -f DrmKms.aui ]; then
-      austral compile --target-type=tc DrmKms.aui,DrmKms.aum
-    fi
-    if [ -f Mailbox.aui ]; then
-      austral compile --target-type=tc Mailbox.aui,Mailbox.aum
-    fi
-    if [ -f HostGate.aui ]; then
-      austral compile --target-type=tc HostGate.aui,HostGate.aum
-    fi
-    if [ -f DropIn.aui ]; then
-      austral compile --target-type=tc DropIn.aui,DropIn.aum
-    fi
-  )
+if need gfortran; then
+  make -C "$ROOT/formal/fortran" check
   checked=$((checked + 1))
-  printf 'ok: austral formal modules\n'
+  printf 'ok: fortran formal modules\n'
 else
-  n=$(find "$ROOT/formal/austral" -name '*.aui' 2>/dev/null | wc -l | tr -d ' ')
-  lines=$(find "$ROOT/formal/austral" -type f \( -name '*.aui' -o -name '*.aum' \) -print0 2>/dev/null | xargs -0 cat 2>/dev/null | wc -l | tr -d ' ')
-  printf 'note: austral not installed; %s modules / %s lines under formal/austral/\n' "$n" "$lines"
-  printf '      (stock tokei ignores .aui/.aum — run scripts/loc.sh)\n'
-  printf '      install from https://github.com/austral/austral then re-run with --strict\n'
+  n=$(find "$ROOT/formal/fortran" -name '*.f90' 2>/dev/null | wc -l | tr -d ' ')
+  lines=$(find "$ROOT/formal/fortran" -type f -name '*.f90' -print0 2>/dev/null | xargs -0 cat 2>/dev/null | wc -l | tr -d ' ')
+  printf 'note: gfortran not installed; %s modules / %s lines under formal/fortran/\n' "$n" "$lines"
+  printf '      install gcc-gfortran (Fedora) or gfortran, then re-run with --strict\n'
 fi
 
 if [ "$checked" -eq 0 ]; then

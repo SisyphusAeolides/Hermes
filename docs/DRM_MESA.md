@@ -48,7 +48,7 @@ ICD library name (for future `nvidia_icd.json` / Mesa loader):
 
 - Idris2: `formal/idris2/DrmKms.idr`
 - Agda: `formal/agda/DrmKms.agda`
-- Austral: `formal/austral/DrmKms.aui` / `.aum`
+- Fortran: `formal/fortran/hermes_drm_kms.f90`
 
 ## Smoke
 
