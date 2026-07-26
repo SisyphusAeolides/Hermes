@@ -31,6 +31,8 @@ pub struct Connector {
     pub modes: alloc::vec::Vec<DisplayMode>,
     pub encoder_id: u32,
     pub crtc_id: Option<u32>,
+    /// Property blob id for EDID (if attached on device PropertyStore).
+    pub edid_blob_id: Option<u32>,
 }
 
 impl Connector {
@@ -42,6 +44,7 @@ impl Connector {
             modes: alloc::vec![DisplayMode::fhd_60(), DisplayMode::hd_60()],
             encoder_id: id,
             crtc_id: None,
+            edid_blob_id: None,
         }
     }
 

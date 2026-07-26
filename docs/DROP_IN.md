@@ -49,7 +49,23 @@ cargo run -p hermes-ctl --bin hermes-ctl -- smi-smoke online
 Host discover binds Offline NVML slots from PCI. `--hermes-sim-online` promotes
 the first GPU with a complete-evidence Online manifold so power/temp/fan/util
 query paths run through the real NVML ABI. Summary table shows fan, power cap,
-brand, and SM version when Online.
+brand, and SM version when Online. CSV:
+
+```sh
+nvidia-smi --hermes-sim-online --query-gpu=name,brand,fan.speed \
+  --format=csv,noheader
+```
+
+### kmod / chardev probe
+
+```sh
+cargo run -p hermes-ctl --bin hermes-ctl -- chardev-smoke
+cargo run -p hermes-ctl --bin hermes-ctl -- kmod-status
+```
+
+Reports `/sys/module/nvidia*` and `/dev/nvidia*` honestly. When the Hermes
+`nvidia.ko` is loaded, ioctl/read of `/dev/nvidiactl` returns `HermesCtlStatus`
+(never invents Online without kernel phase Online).
 
 ### nvidia-settings
 

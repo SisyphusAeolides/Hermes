@@ -1,6 +1,7 @@
 //! Hermes GSP control and host inspection.
 //! Reports phase from the real shared sequencer (never invents Online).
 
+mod chardev;
 mod silicon;
 
 use hermes_core::{
@@ -111,10 +112,13 @@ fn main() {
         Some("session-promote") => session_promote_cmd(),
         Some("dropin-complete") => dropin_complete_cmd(),
         Some("dropin-catalog") => dropin_catalog_cmd(),
+        Some("chardev-smoke") | Some("kmod-status") => {
+            std::process::exit(chardev::smoke());
+        }
         _ => {
             println!("hermes-ctl — Hermes GSP control\n");
             println!(
-                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online|deep> | drm-smoke <offline|online|dual|gem> | mesa-smoke <offline|online|gem> | stack-smoke | icd-json | silicon-probe [fwroot] | host-bar | mailbox-smoke | silicon-bringup <sim|live-fw|fail-mailbox|host-block> | session-smoke | session-promote | smi-smoke <host|online> | dropin-catalog | dropin-complete"
+                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online|deep> | drm-smoke <offline|online|dual|gem|edid> | mesa-smoke <offline|online|gem> | stack-smoke | icd-json | silicon-probe [fwroot] | host-bar | mailbox-smoke | silicon-bringup <sim|live-fw|fail-mailbox|host-block> | session-smoke | session-promote | smi-smoke <host|online> | chardev-smoke | kmod-status | dropin-catalog | dropin-complete"
             );
         }
     }
@@ -903,8 +907,29 @@ fn drm_smoke(mode: &str) {
             );
             println!("PASS");
         }
+        "edid" => {
+            let dev = DrmDevice::virtual_desktop(true);
+            let edid = dev.connector_edid(1).expect("edid");
+            assert!(hermes_drm::edid_checksum_ok(edid));
+            assert_eq!(hermes_drm::edid_preferred_size(edid), Some((1920, 1080)));
+            println!(
+                "edid: len={} preferred={:?} props={}",
+                edid.len(),
+                hermes_drm::edid_preferred_size(edid),
+                dev.props.prop_count()
+            );
+            // Offline attach must fail-closed.
+            let mut off = DrmDevice::virtual_desktop(false);
+            assert!(off.attach_synthetic_edid().is_err());
+            assert!(off.connector_edid(1).is_none());
+            // Dual-head: each connector gets a blob.
+            let dual = DrmDevice::virtual_dual_head(true);
+            assert!(dual.connector_edid(1).is_some());
+            assert!(dual.connector_edid(2).is_some());
+            println!("PASS");
+        }
         other => {
-            eprintln!("use offline|online|dual|gem, got {other}");
+            eprintln!("use offline|online|dual|gem|edid, got {other}");
             std::process::exit(2);
         }
     }
@@ -1180,6 +1205,12 @@ fn dropin_complete_cmd() {
     assert!(!glv.is_null());
     println!("glGetString vendor ok; cuda primary+memgetinfo ok");
 
-    println!("dropin-complete: PASS (catalog + gates + multi-surface session + modprobe/cuda/gl)");
+    // 10) DRM EDID + chardev probe (nodes may be absent without loaded kmod).
+    drm_smoke("edid");
+    assert_eq!(chardev::smoke(), 0);
+
+    println!(
+        "dropin-complete: PASS (catalog + gates + multi-surface + modprobe/cuda/gl/edid/chardev)"
+    );
 }
 

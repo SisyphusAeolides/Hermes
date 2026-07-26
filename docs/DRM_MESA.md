@@ -16,8 +16,11 @@ Both are **GSP-gated**: Offline never applies modeset or advertises a GPU.
 - `AtomicCommit::commit` — fail-closed atomic apply
 - `AtomicCommit::disable_crtc` — blank a pipe
 - `GemManager` / `create_dumb` — GEM-like dumb buffers (pitch 64-aligned)
+- `flink` / `open_name` / PRIME export-import tokens
 - `add_fb_from_gem` — FB from dumb handle
 - `page_flip` + software `VblankState` — flip with event sequence
+- Synthetic EDID blobs + property store on Online virtual connectors
+  (`drm-smoke edid`)
 
 ## Kernel `nvidia-drm.ko`
 

@@ -39,6 +39,12 @@ fn main() {
     let want_sim_online = args.iter().any(|a| a == "--hermes-sim-online")
         || std::env::var("HERMES_SMI_SIM_ONLINE").ok().as_deref() == Some("1");
     let want_reset = args.iter().any(|a| a == "--hermes-reset");
+    let csv = args.iter().any(|a| a == "--format=csv" || a.starts_with("--format=csv,"));
+    let noheader = args.iter().any(|a| a.contains("noheader"))
+        || args
+            .iter()
+            .any(|a| a == "--format=csv,noheader" || a == "--format=csv,noheader,nounits");
+    let nounits = args.iter().any(|a| a.contains("nounits"));
 
     if want_reset {
         hermes_nvml_reset();
@@ -74,18 +80,36 @@ fn main() {
     }
 
     if let Some(q) = args.iter().find_map(|a| a.strip_prefix("--query-gpu=")) {
-        query_gpu_fields(q);
+        query_gpu_fields(q, QueryFormat {
+            csv,
+            header: !noheader,
+            units: !nounits,
+        });
         let _ = nvmlShutdown();
         return;
     }
     if args.iter().any(|a| a == "--query-gpu") {
-        query_gpu_fields("name");
+        query_gpu_fields(
+            "name",
+            QueryFormat {
+                csv,
+                header: !noheader,
+                units: !nounits,
+            },
+        );
         let _ = nvmlShutdown();
         return;
     }
 
     print_summary_table(discovered);
     let _ = nvmlShutdown();
+}
+
+#[derive(Clone, Copy)]
+struct QueryFormat {
+    csv: bool,
+    header: bool,
+    units: bool,
 }
 
 fn print_help() {
@@ -95,6 +119,8 @@ fn print_help() {
            nvidia-smi                 Summary table from NVML session state\n\
            nvidia-smi -L              List GPUs\n\
            nvidia-smi --query-gpu=name,temperature.gpu,fan.speed,power.draw,memory.total,brand\n\
+           nvidia-smi --query-gpu=name,fan.speed --format=csv\n\
+           nvidia-smi --query-gpu=name --format=csv,noheader,nounits\n\
            nvidia-smi --hermes-sim-online   Promote first GPU with complete-evidence Online\n\
            nvidia-smi --hermes-reset\n\n\
          Devices come from host PCI discovery and/or session binds.\n\
@@ -129,14 +155,29 @@ fn list_gpus() {
     }
 }
 
-/// CSV-ish `--query-gpu=field1,field2` (Hermes subset of classic smi query).
-fn query_gpu_fields(spec: &str) {
-    let fields: Vec<&str> = spec.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+/// `--query-gpu=field1,field2` with optional CSV formatting (classic smi shape).
+fn query_gpu_fields(spec: &str, fmt: QueryFormat) {
+    let fields: Vec<&str> = spec
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
     if fields.is_empty() {
         return;
     }
-    // Header line (classic smi prints values only for csv mode; we print header for clarity).
-    println!("{}", fields.join(", "));
+    let sep = if fmt.csv { ", " } else { ", " };
+    if fmt.header {
+        if fmt.csv {
+            // Classic: name [MHz], temperature.gpu [C], ...
+            let headers: Vec<String> = fields
+                .iter()
+                .map(|f| csv_header(f, fmt.units))
+                .collect();
+            println!("{}", headers.join(sep));
+        } else {
+            println!("{}", fields.join(sep));
+        }
+    }
     let mut count = 0u32;
     assert_eq!(nvmlDeviceGetCount_v2(&mut count), NVML_SUCCESS);
     for i in 0..count {
@@ -145,20 +186,35 @@ fn query_gpu_fields(spec: &str) {
         let online = hermes_nvml_gpu_phase(i as usize) == Some(HermesPhase::Online);
         let mut cells = Vec::new();
         for f in &fields {
-            cells.push(query_one_field(h, f, online));
+            cells.push(query_one_field(h, f, online, fmt.units));
         }
-        println!("{}", cells.join(", "));
+        println!("{}", cells.join(sep));
     }
 }
 
-fn query_one_field(h: u64, field: &str, online: bool) -> String {
+fn csv_header(field: &str, units: bool) -> String {
+    if !units {
+        return field.to_string();
+    }
+    match field {
+        "temperature.gpu" | "temp" => format!("{field} [C]"),
+        "fan.speed" | "fan" => format!("{field} [%]"),
+        "power.draw" | "power" | "power.limit" => format!("{field} [W]"),
+        "memory.total" | "memory.used" | "memory.free" => format!("{field} [MiB]"),
+        "utilization.gpu" => format!("{field} [%]"),
+        other => other.to_string(),
+    }
+}
+
+fn query_one_field(h: u64, field: &str, online: bool, units: bool) -> String {
+    let na = "[N/A]";
     match field {
         "name" | "gpu_name" => {
             let mut name = [0i8; 96];
             if nvmlDeviceGetName(h, name.as_mut_ptr(), 96) == NVML_SUCCESS {
                 cstr_buf(&name)
             } else {
-                "[N/A]".into()
+                na.into()
             }
         }
         "pci.bus_id" | "bus_id" => {
@@ -166,40 +222,44 @@ fn query_one_field(h: u64, field: &str, online: bool) -> String {
             if nvmlDeviceGetPCIBusId(h, bus.as_mut_ptr(), 32) == NVML_SUCCESS {
                 cstr_buf(&bus)
             } else {
-                "[N/A]".into()
+                na.into()
             }
         }
         "temperature.gpu" | "temp" => {
             if !online {
-                return "[N/A]".into();
+                return na.into();
             }
             let mut t = 0u32;
             if nvmlDeviceGetTemperature(h, 0, &mut t) == NVML_SUCCESS {
-                format!("{t}")
+                if units {
+                    format!("{t}")
+                } else {
+                    format!("{t}")
+                }
             } else {
-                "[N/A]".into()
+                na.into()
             }
         }
         "fan.speed" | "fan" => {
             if !online {
-                return "[N/A]".into();
+                return na.into();
             }
             let mut fan = 0u32;
             if nvmlDeviceGetFanSpeed(h, &mut fan) == NVML_SUCCESS {
                 format!("{fan}")
             } else {
-                "[N/A]".into()
+                na.into()
             }
         }
         "power.draw" | "power" => {
             if !online {
-                return "[N/A]".into();
+                return na.into();
             }
             let mut mw = 0u32;
             if nvmlDeviceGetPowerUsage(h, &mut mw) == NVML_SUCCESS {
                 format!("{:.2}", mw as f64 / 1000.0)
             } else {
-                "[N/A]".into()
+                na.into()
             }
         }
         "power.limit" => {
@@ -207,7 +267,7 @@ fn query_one_field(h: u64, field: &str, online: bool) -> String {
             if nvmlDeviceGetEnforcedPowerLimit(h, &mut lim) == NVML_SUCCESS {
                 format!("{:.0}", lim as f64 / 1000.0)
             } else {
-                "[N/A]".into()
+                na.into()
             }
         }
         "memory.total" => {
@@ -219,7 +279,7 @@ fn query_one_field(h: u64, field: &str, online: bool) -> String {
             if nvmlDeviceGetMemoryInfo(h, &mut mem) == NVML_SUCCESS {
                 format!("{}", mem.total / (1024 * 1024))
             } else {
-                "[N/A]".into()
+                na.into()
             }
         }
         "memory.used" => {
@@ -231,7 +291,7 @@ fn query_one_field(h: u64, field: &str, online: bool) -> String {
             if nvmlDeviceGetMemoryInfo(h, &mut mem) == NVML_SUCCESS {
                 format!("{}", mem.used / (1024 * 1024))
             } else {
-                "[N/A]".into()
+                na.into()
             }
         }
         "memory.free" => {
@@ -243,18 +303,18 @@ fn query_one_field(h: u64, field: &str, online: bool) -> String {
             if nvmlDeviceGetMemoryInfo(h, &mut mem) == NVML_SUCCESS {
                 format!("{}", mem.free / (1024 * 1024))
             } else {
-                "[N/A]".into()
+                na.into()
             }
         }
         "utilization.gpu" => {
             if !online {
-                return "[N/A]".into();
+                return na.into();
             }
             let mut u = NvmlUtilization_t { gpu: 0, memory: 0 };
             if nvmlDeviceGetUtilizationRates(h, &mut u) == NVML_SUCCESS {
                 format!("{}", u.gpu)
             } else {
-                "[N/A]".into()
+                na.into()
             }
         }
         "brand" => {
@@ -262,7 +322,7 @@ fn query_one_field(h: u64, field: &str, online: bool) -> String {
             if nvmlDeviceGetBrand(h, &mut brand) == NVML_SUCCESS {
                 hermes_nvml_brand_name(brand).to_string()
             } else {
-                "[N/A]".into()
+                na.into()
             }
         }
         "compute_cap" => {
@@ -271,7 +331,7 @@ fn query_one_field(h: u64, field: &str, online: bool) -> String {
             if nvmlDeviceGetCudaComputeCapability(h, &mut maj, &mut min) == NVML_SUCCESS {
                 format!("{maj}.{min}")
             } else {
-                "[N/A]".into()
+                na.into()
             }
         }
         other => format!("[unknown:{other}]"),

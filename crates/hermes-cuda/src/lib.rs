@@ -103,6 +103,8 @@ struct CudaState {
     functions: Vec<Function>,
     streams: Vec<Stream>,
     events: Vec<Event>,
+    /// Enabled peer pairs (device_a, device_b) after EnablePeerAccess.
+    peer_enabled: Vec<(u32, u32)>,
 }
 
 static STATE: Mutex<CudaState> = Mutex::new(CudaState {
@@ -117,6 +119,7 @@ static STATE: Mutex<CudaState> = Mutex::new(CudaState {
     functions: Vec::new(),
     streams: Vec::new(),
     events: Vec::new(),
+    peer_enabled: Vec::new(),
 });
 
 fn with_state<F, R>(f: F) -> R
@@ -153,6 +156,7 @@ pub fn hermes_cuda_set_gsp_online(online: bool) {
             s.functions.clear();
             s.streams.clear();
             s.events.clear();
+            s.peer_enabled.clear();
             s.driver_init = false;
         }
     });
@@ -210,8 +214,19 @@ pub fn hermes_cuda_reset() {
         s.functions.clear();
         s.streams.clear();
         s.events.clear();
+        s.peer_enabled.clear();
         s.next_handle = 1;
     });
+}
+
+/// Register a second (or Nth) Online session GPU for multi-device / peer tests.
+pub fn hermes_cuda_register_peer_device(
+    name: &str,
+    total_mem: u64,
+    compute_major: u32,
+    compute_minor: u32,
+) -> u32 {
+    hermes_cuda_register_device(name, total_mem, compute_major, compute_minor)
 }
 
 fn live_ctx(s: &CudaState) -> Result<u64, CudaResult> {
@@ -791,6 +806,96 @@ pub extern "C" fn cuDeviceTotalMem_v2(bytes: *mut u64, device: i32) -> CudaResul
         }
         CUDA_SUCCESS
     })
+}
+
+/// Peer access capability: same Online session, distinct devices → yes (software).
+#[no_mangle]
+pub extern "C" fn cuDeviceCanAccessPeer(
+    can_access: *mut i32,
+    device: i32,
+    peer_device: i32,
+) -> CudaResult {
+    if can_access.is_null() {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    with_state(|s| {
+        let g = require_gsp(s);
+        if g != CUDA_SUCCESS {
+            return g;
+        }
+        if !s.driver_init {
+            return CUDA_ERROR_NOT_INITIALIZED;
+        }
+        if device < 0
+            || peer_device < 0
+            || device as usize >= s.devices.len()
+            || peer_device as usize >= s.devices.len()
+        {
+            return CUDA_ERROR_INVALID_DEVICE;
+        }
+        let ok = device != peer_device;
+        unsafe {
+            *can_access = if ok { 1 } else { 0 };
+        }
+        CUDA_SUCCESS
+    })
+}
+
+/// Enable peer access from the current context's device to `peer_device`.
+#[no_mangle]
+pub extern "C" fn cuCtxEnablePeerAccess(peer_device: i32, _flags: u32) -> CudaResult {
+    with_state(|s| {
+        let g = require_gsp(s);
+        if g != CUDA_SUCCESS {
+            return g;
+        }
+        let ctx_id = match live_ctx(s) {
+            Ok(c) => c,
+            Err(e) => return e,
+        };
+        let device = match s.contexts.iter().find(|c| c.id == ctx_id) {
+            Some(c) => c.device,
+            None => return CUDA_ERROR_INVALID_CONTEXT,
+        };
+        if peer_device < 0 || peer_device as usize >= s.devices.len() {
+            return CUDA_ERROR_INVALID_DEVICE;
+        }
+        if peer_device as u32 == device {
+            return CUDA_ERROR_INVALID_DEVICE;
+        }
+        let pair = (device, peer_device as u32);
+        if !s.peer_enabled.contains(&pair) {
+            s.peer_enabled.push(pair);
+        }
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuCtxDisablePeerAccess(peer_device: i32) -> CudaResult {
+    with_state(|s| {
+        let ctx_id = match live_ctx(s) {
+            Ok(c) => c,
+            Err(e) => return e,
+        };
+        let device = match s.contexts.iter().find(|c| c.id == ctx_id) {
+            Some(c) => c.device,
+            None => return CUDA_ERROR_INVALID_CONTEXT,
+        };
+        let before = s.peer_enabled.len();
+        s.peer_enabled
+            .retain(|(a, b)| !(*a == device && *b == peer_device as u32));
+        if s.peer_enabled.len() == before {
+            CUDA_ERROR_INVALID_VALUE
+        } else {
+            CUDA_SUCCESS
+        }
+    })
+}
+
+/// Hermes helper: true when peer access is enabled for (device, peer).
+pub fn hermes_cuda_peer_enabled(device: u32, peer: u32) -> bool {
+    with_state(|s| s.peer_enabled.contains(&(device, peer)))
 }
 
 #[no_mangle]
@@ -1551,9 +1656,8 @@ pub extern "C" fn cudaRuntimeGetVersion(runtime_version: *mut i32) -> CudaResult
 
 /// Count of driver entry points Hermes currently exports (for drop-in dashboards).
 pub fn hermes_cuda_driver_entry_count() -> usize {
-    // cuInit, device*, ctx*, primary*, mem*, memcpy*+async, memset, module*, launch,
-    // stream*, event*, error*, version*, runtime aliases
-    52
+    // + peer access APIs
+    55
 }
 
 pub fn hermes_cuda_host_sort_i32(data: &mut [i32]) {
@@ -1872,5 +1976,34 @@ mod tests {
         assert_ne!(mid, 0);
         assert_eq!(cuModuleUnload(mid), CUDA_SUCCESS);
         hermes_cuda_reset();
+    }
+
+    #[test]
+    fn multi_device_peer_access() {
+        let _g = TEST_LOCK.lock().unwrap();
+        hermes_cuda_reset();
+        hermes_cuda_set_gsp_online(true);
+        hermes_cuda_register_device("GPU0", 8 << 30, 7, 5);
+        hermes_cuda_register_peer_device("GPU1", 8 << 30, 7, 5);
+        assert_eq!(cuInit(0), CUDA_SUCCESS);
+        let mut n = 0i32;
+        assert_eq!(cuDeviceGetCount(&mut n), CUDA_SUCCESS);
+        assert_eq!(n, 2);
+        let mut can = 0i32;
+        assert_eq!(cuDeviceCanAccessPeer(&mut can, 0, 1), CUDA_SUCCESS);
+        assert_eq!(can, 1);
+        assert_eq!(cuDeviceCanAccessPeer(&mut can, 0, 0), CUDA_SUCCESS);
+        assert_eq!(can, 0);
+        let mut ctx = 0u64;
+        assert_eq!(cuCtxCreate_v2(&mut ctx, 0, 0), CUDA_SUCCESS);
+        assert_eq!(cuCtxEnablePeerAccess(1, 0), CUDA_SUCCESS);
+        assert!(hermes_cuda_peer_enabled(0, 1));
+        assert_eq!(cuCtxDisablePeerAccess(1), CUDA_SUCCESS);
+        assert!(!hermes_cuda_peer_enabled(0, 1));
+        hermes_cuda_reset();
+        assert_eq!(
+            cuDeviceCanAccessPeer(&mut can, 0, 1),
+            CUDA_ERROR_HERMES_GSP_OFFLINE
+        );
     }
 }
