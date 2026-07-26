@@ -42,6 +42,9 @@ if need idris2; then
   if [ -f "$ROOT/formal/idris2/DrmKms.idr" ]; then
     (cd "$ROOT/formal/idris2" && idris2 --check DrmKms.idr)
   fi
+  if [ -f "$ROOT/formal/idris2/CudaStream.idr" ]; then
+    (cd "$ROOT/formal/idris2" && idris2 --check CudaStream.idr)
+  fi
   checked=$((checked + 1))
   printf 'ok: idris2 formal models\n'
 fi
@@ -56,6 +59,9 @@ if need agda; then
   fi
   if [ -f "$ROOT/formal/agda/DrmKms.agda" ]; then
     (cd "$ROOT/formal/agda" && agda DrmKms.agda)
+  fi
+  if [ -f "$ROOT/formal/agda/CudaStream.agda" ]; then
+    (cd "$ROOT/formal/agda" && agda CudaStream.agda)
   fi
   checked=$((checked + 1))
   printf 'ok: agda formal models\n'

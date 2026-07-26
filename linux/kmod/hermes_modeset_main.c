@@ -2,9 +2,17 @@
 #include <linux/module.h>
 #include "include/hermes_kmod.h"
 
+extern bool hermes_gsp_is_online(void);
+extern enum hermes_phase hermes_gsp_phase(void);
+
 static int __init hermes_modeset_init(void)
 {
-	pr_info("hermes/nvidia-modeset: companion surface loaded (depends on nvidia GSP online)\n");
+	bool online = hermes_gsp_is_online();
+
+	pr_info("hermes/nvidia-modeset: loaded (gsp_online=%d phase=%s); modeset gated\n",
+		online, hermes_phase_name(hermes_gsp_phase()));
+	if (!online)
+		pr_info("hermes/nvidia-modeset: Offline — no modeset authority published\n");
 	return 0;
 }
 

@@ -56,11 +56,33 @@ struct DeviceBuffer {
 
 #[derive(Clone, Debug)]
 struct Module {
-    #[allow(dead_code)]
     id: u64,
     ctx: u64,
     #[allow(dead_code)]
     name: String,
+    functions: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+struct Function {
+    id: u64,
+    module: u64,
+    #[allow(dead_code)]
+    name: String,
+}
+
+#[derive(Clone, Debug)]
+struct Stream {
+    id: u64,
+    ctx: u64,
+    live: bool,
+}
+
+#[derive(Clone, Debug)]
+struct Event {
+    id: u64,
+    recorded_on: Option<u64>,
+    completed: bool,
 }
 
 #[derive(Default)]
@@ -72,6 +94,9 @@ struct CudaState {
     contexts: Vec<Context>,
     buffers: Vec<DeviceBuffer>,
     modules: Vec<Module>,
+    functions: Vec<Function>,
+    streams: Vec<Stream>,
+    events: Vec<Event>,
 }
 
 static STATE: Mutex<CudaState> = Mutex::new(CudaState {
@@ -82,6 +107,9 @@ static STATE: Mutex<CudaState> = Mutex::new(CudaState {
     contexts: Vec::new(),
     buffers: Vec::new(),
     modules: Vec::new(),
+    functions: Vec::new(),
+    streams: Vec::new(),
+    events: Vec::new(),
 });
 
 fn with_state<F, R>(f: F) -> R
@@ -114,6 +142,9 @@ pub fn hermes_cuda_set_gsp_online(online: bool) {
             s.contexts.clear();
             s.buffers.clear();
             s.modules.clear();
+            s.functions.clear();
+            s.streams.clear();
+            s.events.clear();
             s.driver_init = false;
         }
     });
@@ -131,8 +162,20 @@ pub fn hermes_cuda_reset() {
         s.contexts.clear();
         s.buffers.clear();
         s.modules.clear();
+        s.functions.clear();
+        s.streams.clear();
+        s.events.clear();
         s.next_handle = 1;
     });
+}
+
+fn live_ctx(s: &CudaState) -> Result<u64, CudaResult> {
+    s.contexts
+        .iter()
+        .rev()
+        .find(|c| c.live)
+        .map(|c| c.id)
+        .ok_or(CUDA_ERROR_INVALID_CONTEXT)
 }
 
 // ─── Driver API ───────────────────────────────────────────────────────────
@@ -229,8 +272,96 @@ pub extern "C" fn cuCtxDestroy_v2(ctx: u64) -> CudaResult {
     }
     with_state(|s| {
         s.buffers.retain(|b| b.ctx != ctx);
+        let mod_ids: Vec<u64> = s
+            .modules
+            .iter()
+            .filter(|m| m.ctx == ctx)
+            .map(|m| m.id)
+            .collect();
+        s.functions.retain(|f| !mod_ids.contains(&f.module));
         s.modules.retain(|m| m.ctx != ctx);
+        s.streams.retain(|st| st.ctx != ctx);
         s.contexts.retain(|c| c.id != ctx);
+        CUDA_SUCCESS
+    })
+}
+
+/// Device attributes (subset of CUdevice_attribute).
+pub const CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK: i32 = 1;
+pub const CU_DEVICE_ATTRIBUTE_WARP_SIZE: i32 = 10;
+pub const CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR: i32 = 75;
+pub const CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR: i32 = 76;
+pub const CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT: i32 = 16;
+
+#[no_mangle]
+pub extern "C" fn cuDeviceGetAttribute(
+    pi: *mut i32,
+    attrib: i32,
+    device: i32,
+) -> CudaResult {
+    if pi.is_null() {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    with_state(|s| {
+        if !s.driver_init {
+            return CUDA_ERROR_NOT_INITIALIZED;
+        }
+        if device < 0 || device as usize >= s.devices.len() {
+            return CUDA_ERROR_INVALID_DEVICE;
+        }
+        let dev = &s.devices[device as usize];
+        let val = match attrib {
+            CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK => 1024,
+            CU_DEVICE_ATTRIBUTE_WARP_SIZE => 32,
+            CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR => dev.compute_major as i32,
+            CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR => dev.compute_minor as i32,
+            CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT => 40,
+            _ => return CUDA_ERROR_INVALID_VALUE,
+        };
+        unsafe {
+            *pi = val;
+        }
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuDeviceGetName(name: *mut u8, len: i32, device: i32) -> CudaResult {
+    if name.is_null() || len <= 0 {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    with_state(|s| {
+        if !s.driver_init {
+            return CUDA_ERROR_NOT_INITIALIZED;
+        }
+        if device < 0 || device as usize >= s.devices.len() {
+            return CUDA_ERROR_INVALID_DEVICE;
+        }
+        let src = s.devices[device as usize].name.as_bytes();
+        let n = core::cmp::min(src.len(), (len as usize).saturating_sub(1));
+        unsafe {
+            core::ptr::copy_nonoverlapping(src.as_ptr(), name, n);
+            *name.add(n) = 0;
+        }
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuDeviceTotalMem_v2(bytes: *mut u64, device: i32) -> CudaResult {
+    if bytes.is_null() {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    with_state(|s| {
+        if !s.driver_init {
+            return CUDA_ERROR_NOT_INITIALIZED;
+        }
+        if device < 0 || device as usize >= s.devices.len() {
+            return CUDA_ERROR_INVALID_DEVICE;
+        }
+        unsafe {
+            *bytes = s.devices[device as usize].total_mem;
+        }
         CUDA_SUCCESS
     })
 }
@@ -324,6 +455,53 @@ pub extern "C" fn cuMemcpyDtoH_v2(dst: *mut u8, src: u64, bytes: usize) -> CudaR
 }
 
 #[no_mangle]
+pub extern "C" fn cuMemcpyDtoD_v2(dst: u64, src: u64, bytes: usize) -> CudaResult {
+    if bytes == 0 {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    with_state(|s| {
+        let g = require_gsp(s);
+        if g != CUDA_SUCCESS {
+            return g;
+        }
+        let src_idx = match s.buffers.iter().position(|b| b.id == src) {
+            Some(i) => i,
+            None => return CUDA_ERROR_INVALID_VALUE,
+        };
+        let dst_idx = match s.buffers.iter().position(|b| b.id == dst) {
+            Some(i) => i,
+            None => return CUDA_ERROR_INVALID_VALUE,
+        };
+        if bytes > s.buffers[src_idx].bytes || bytes > s.buffers[dst_idx].bytes {
+            return CUDA_ERROR_INVALID_VALUE;
+        }
+        // Split borrows via clone of source slice.
+        let tmp = s.buffers[src_idx].data[..bytes].to_vec();
+        s.buffers[dst_idx].data[..bytes].copy_from_slice(&tmp);
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuMemsetD8_v2(dst: u64, value: u8, n: usize) -> CudaResult {
+    with_state(|s| {
+        let g = require_gsp(s);
+        if g != CUDA_SUCCESS {
+            return g;
+        }
+        let buf = match s.buffers.iter_mut().find(|b| b.id == dst) {
+            Some(b) => b,
+            None => return CUDA_ERROR_INVALID_VALUE,
+        };
+        if n > buf.bytes {
+            return CUDA_ERROR_INVALID_VALUE;
+        }
+        buf.data[..n].fill(value);
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
 pub extern "C" fn cuModuleLoadData(module: *mut u64, image: *const u8) -> CudaResult {
     if module.is_null() || image.is_null() {
         return CUDA_ERROR_INVALID_VALUE;
@@ -333,18 +511,259 @@ pub extern "C" fn cuModuleLoadData(module: *mut u64, image: *const u8) -> CudaRe
         if g != CUDA_SUCCESS {
             return g;
         }
-        let ctx = match s.contexts.iter().rev().find(|c| c.live) {
-            Some(c) => c.id,
-            None => return CUDA_ERROR_INVALID_CONTEXT,
+        let ctx = match live_ctx(s) {
+            Ok(c) => c,
+            Err(e) => return e,
         };
         let id = next_id(s);
         s.modules.push(Module {
             id,
             ctx,
             name: "module".into(),
+            // Default export so GetFunction can resolve a kernel without real cubin.
+            functions: vec!["hermes_kernel".into(), "main".into()],
         });
         unsafe {
             *module = id;
+        }
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuModuleUnload(module: u64) -> CudaResult {
+    with_state(|s| {
+        s.functions.retain(|f| f.module != module);
+        let before = s.modules.len();
+        s.modules.retain(|m| m.id != module);
+        if s.modules.len() == before {
+            CUDA_ERROR_INVALID_VALUE
+        } else {
+            CUDA_SUCCESS
+        }
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuModuleGetFunction(
+    hfunc: *mut u64,
+    module: u64,
+    name: *const u8,
+) -> CudaResult {
+    if hfunc.is_null() || name.is_null() {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    with_state(|s| {
+        let g = require_gsp(s);
+        if g != CUDA_SUCCESS {
+            return g;
+        }
+        let m = match s.modules.iter().find(|m| m.id == module) {
+            Some(m) => m,
+            None => return CUDA_ERROR_INVALID_VALUE,
+        };
+        let cstr = unsafe {
+            let mut len = 0usize;
+            while *name.add(len) != 0 && len < 256 {
+                len += 1;
+            }
+            core::str::from_utf8_unchecked(core::slice::from_raw_parts(name, len))
+        };
+        if !m.functions.iter().any(|f| f == cstr) {
+            return CUDA_ERROR_NOT_SUPPORTED;
+        }
+        let id = next_id(s);
+        s.functions.push(Function {
+            id,
+            module,
+            name: cstr.into(),
+        });
+        unsafe {
+            *hfunc = id;
+        }
+        CUDA_SUCCESS
+    })
+}
+
+/// Software "launch" — validates grid/block and records success (no real SM).
+#[no_mangle]
+pub extern "C" fn cuLaunchKernel(
+    f: u64,
+    grid_x: u32,
+    grid_y: u32,
+    grid_z: u32,
+    block_x: u32,
+    block_y: u32,
+    block_z: u32,
+    _shared_mem: u32,
+    hstream: u64,
+    _kernel_params: *mut *mut u8,
+    _extra: *mut *mut u8,
+) -> CudaResult {
+    if grid_x == 0 || block_x == 0 {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    if block_x as u64 * block_y as u64 * block_z as u64 > 1024 {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    let _ = (grid_y, grid_z);
+    with_state(|s| {
+        let g = require_gsp(s);
+        if g != CUDA_SUCCESS {
+            return g;
+        }
+        if !s.functions.iter().any(|fn_| fn_.id == f) {
+            return CUDA_ERROR_INVALID_VALUE;
+        }
+        if hstream != 0 && !s.streams.iter().any(|st| st.id == hstream && st.live) {
+            return CUDA_ERROR_INVALID_VALUE;
+        }
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuStreamCreate(phstream: *mut u64, _flags: u32) -> CudaResult {
+    if phstream.is_null() {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    with_state(|s| {
+        let g = require_gsp(s);
+        if g != CUDA_SUCCESS {
+            return g;
+        }
+        let ctx = match live_ctx(s) {
+            Ok(c) => c,
+            Err(e) => return e,
+        };
+        let id = next_id(s);
+        s.streams.push(Stream {
+            id,
+            ctx,
+            live: true,
+        });
+        unsafe {
+            *phstream = id;
+        }
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuStreamDestroy_v2(hstream: u64) -> CudaResult {
+    with_state(|s| {
+        let before = s.streams.len();
+        s.streams.retain(|st| st.id != hstream);
+        if s.streams.len() == before {
+            CUDA_ERROR_INVALID_VALUE
+        } else {
+            CUDA_SUCCESS
+        }
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuStreamSynchronize(hstream: u64) -> CudaResult {
+    with_state(|s| {
+        let g = require_gsp(s);
+        if g != CUDA_SUCCESS {
+            return g;
+        }
+        if hstream != 0 && !s.streams.iter().any(|st| st.id == hstream && st.live) {
+            return CUDA_ERROR_INVALID_VALUE;
+        }
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuEventCreate(phevent: *mut u64, _flags: u32) -> CudaResult {
+    if phevent.is_null() {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    with_state(|s| {
+        let g = require_gsp(s);
+        if g != CUDA_SUCCESS {
+            return g;
+        }
+        let id = next_id(s);
+        s.events.push(Event {
+            id,
+            recorded_on: None,
+            completed: false,
+        });
+        unsafe {
+            *phevent = id;
+        }
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuEventDestroy_v2(hevent: u64) -> CudaResult {
+    with_state(|s| {
+        let before = s.events.len();
+        s.events.retain(|e| e.id != hevent);
+        if s.events.len() == before {
+            CUDA_ERROR_INVALID_VALUE
+        } else {
+            CUDA_SUCCESS
+        }
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuEventRecord(hevent: u64, hstream: u64) -> CudaResult {
+    with_state(|s| {
+        let g = require_gsp(s);
+        if g != CUDA_SUCCESS {
+            return g;
+        }
+        if hstream != 0 && !s.streams.iter().any(|st| st.id == hstream && st.live) {
+            return CUDA_ERROR_INVALID_VALUE;
+        }
+        let ev = match s.events.iter_mut().find(|e| e.id == hevent) {
+            Some(e) => e,
+            None => return CUDA_ERROR_INVALID_VALUE,
+        };
+        ev.recorded_on = Some(hstream);
+        ev.completed = true; // host sim completes immediately
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuEventSynchronize(hevent: u64) -> CudaResult {
+    with_state(|s| {
+        let g = require_gsp(s);
+        if g != CUDA_SUCCESS {
+            return g;
+        }
+        match s.events.iter().find(|e| e.id == hevent) {
+            Some(e) if e.completed => CUDA_SUCCESS,
+            Some(_) => CUDA_ERROR_NOT_READY,
+            None => CUDA_ERROR_INVALID_VALUE,
+        }
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuEventElapsedTime(ms: *mut f32, start: u64, end: u64) -> CudaResult {
+    if ms.is_null() {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    with_state(|s| {
+        let g = require_gsp(s);
+        if g != CUDA_SUCCESS {
+            return g;
+        }
+        let ok = s.events.iter().any(|e| e.id == start && e.completed)
+            && s.events.iter().any(|e| e.id == end && e.completed);
+        if !ok {
+            return CUDA_ERROR_NOT_READY;
+        }
+        unsafe {
+            *ms = 0.001; // synthetic host elapsed
         }
         CUDA_SUCCESS
     })
@@ -358,7 +777,6 @@ pub extern "C" fn cudaGetDeviceCount(count: *mut i32) -> CudaResult {
         }
         CUDA_SUCCESS
     });
-    // init if needed
     let r = cuInit(0);
     if r != CUDA_SUCCESS {
         return r;
@@ -374,6 +792,31 @@ pub extern "C" fn cudaMalloc(dev_ptr: *mut u64, size: usize) -> CudaResult {
 #[no_mangle]
 pub extern "C" fn cudaFree(dev_ptr: u64) -> CudaResult {
     cuMemFree_v2(dev_ptr)
+}
+
+#[no_mangle]
+pub extern "C" fn cudaStreamCreate(pstream: *mut u64) -> CudaResult {
+    cuStreamCreate(pstream, 0)
+}
+
+#[no_mangle]
+pub extern "C" fn cudaStreamDestroy(stream: u64) -> CudaResult {
+    cuStreamDestroy_v2(stream)
+}
+
+#[no_mangle]
+pub extern "C" fn cudaStreamSynchronize(stream: u64) -> CudaResult {
+    cuStreamSynchronize(stream)
+}
+
+#[no_mangle]
+pub extern "C" fn cudaMemset(dev_ptr: u64, value: i32, count: usize) -> CudaResult {
+    cuMemsetD8_v2(dev_ptr, value as u8, count)
+}
+
+/// Count of driver entry points Hermes currently exports (for drop-in dashboards).
+pub fn hermes_cuda_driver_entry_count() -> usize {
+    28
 }
 
 pub fn hermes_cuda_host_sort_i32(data: &mut [i32]) {
@@ -444,5 +887,79 @@ mod tests {
         use hermes_cccl::{hermes_copy, hermes_reduce};
         assert_eq!(hermes_copy(&a, &mut b), 4);
         assert_eq!(hermes_reduce(&b, 0, |x, y| x + y), 10);
+    }
+
+    #[test]
+    fn stream_event_module_launch() {
+        let _g = TEST_LOCK.lock().unwrap();
+        hermes_cuda_reset();
+        hermes_cuda_set_gsp_online(true);
+        assert_eq!(cuInit(0), CUDA_SUCCESS);
+        let mut ctx = 0u64;
+        assert_eq!(cuCtxCreate_v2(&mut ctx, 0, 0), CUDA_SUCCESS);
+
+        let mut attr = 0i32;
+        assert_eq!(
+            cuDeviceGetAttribute(&mut attr, CU_DEVICE_ATTRIBUTE_WARP_SIZE, 0),
+            CUDA_SUCCESS
+        );
+        assert_eq!(attr, 32);
+
+        let mut name = [0u8; 64];
+        assert_eq!(cuDeviceGetName(name.as_mut_ptr(), 64, 0), CUDA_SUCCESS);
+
+        let mut stream = 0u64;
+        assert_eq!(cuStreamCreate(&mut stream, 0), CUDA_SUCCESS);
+        let mut ev_s = 0u64;
+        let mut ev_e = 0u64;
+        assert_eq!(cuEventCreate(&mut ev_s, 0), CUDA_SUCCESS);
+        assert_eq!(cuEventCreate(&mut ev_e, 0), CUDA_SUCCESS);
+        assert_eq!(cuEventRecord(ev_s, stream), CUDA_SUCCESS);
+
+        let image = b"\0";
+        let mut module = 0u64;
+        assert_eq!(cuModuleLoadData(&mut module, image.as_ptr()), CUDA_SUCCESS);
+        let mut func = 0u64;
+        let kname = b"hermes_kernel\0";
+        assert_eq!(
+            cuModuleGetFunction(&mut func, module, kname.as_ptr()),
+            CUDA_SUCCESS
+        );
+        assert_eq!(
+            cuLaunchKernel(func, 1, 1, 1, 32, 1, 1, 0, stream, core::ptr::null_mut(), core::ptr::null_mut()),
+            CUDA_SUCCESS
+        );
+        assert_eq!(cuEventRecord(ev_e, stream), CUDA_SUCCESS);
+        assert_eq!(cuEventSynchronize(ev_e), CUDA_SUCCESS);
+        let mut ms = 0f32;
+        assert_eq!(cuEventElapsedTime(&mut ms, ev_s, ev_e), CUDA_SUCCESS);
+        assert!(ms > 0.0);
+
+        let mut a = 0u64;
+        let mut b = 0u64;
+        assert_eq!(cuMemAlloc_v2(&mut a, 8), CUDA_SUCCESS);
+        assert_eq!(cuMemAlloc_v2(&mut b, 8), CUDA_SUCCESS);
+        assert_eq!(cuMemsetD8_v2(a, 0xab, 8), CUDA_SUCCESS);
+        assert_eq!(cuMemcpyDtoD_v2(b, a, 8), CUDA_SUCCESS);
+        let mut host = [0u8; 8];
+        assert_eq!(cuMemcpyDtoH_v2(host.as_mut_ptr(), b, 8), CUDA_SUCCESS);
+        assert_eq!(host, [0xab; 8]);
+
+        assert_eq!(cuStreamSynchronize(stream), CUDA_SUCCESS);
+        assert_eq!(cuModuleUnload(module), CUDA_SUCCESS);
+        assert_eq!(cuEventDestroy_v2(ev_s), CUDA_SUCCESS);
+        assert_eq!(cuEventDestroy_v2(ev_e), CUDA_SUCCESS);
+        assert_eq!(cuStreamDestroy_v2(stream), CUDA_SUCCESS);
+        assert_eq!(cuCtxDestroy_v2(ctx), CUDA_SUCCESS);
+        assert!(hermes_cuda_driver_entry_count() >= 20);
+        hermes_cuda_reset();
+    }
+
+    #[test]
+    fn offline_rejects_stream_create() {
+        let _g = TEST_LOCK.lock().unwrap();
+        hermes_cuda_reset();
+        let mut s = 0u64;
+        assert_eq!(cuStreamCreate(&mut s, 0), CUDA_ERROR_HERMES_GSP_OFFLINE);
     }
 }

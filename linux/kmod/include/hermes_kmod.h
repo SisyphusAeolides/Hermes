@@ -64,4 +64,9 @@ struct hermes_bringup_result hermes_run_bringup(const struct hermes_pci_id *id,
 						const struct hermes_hw_evidence *ev);
 const char *hermes_phase_name(enum hermes_phase phase);
 
+/* Global Online flag published by nvidia.ko for companion modules. */
+bool hermes_gsp_is_online(void);
+enum hermes_phase hermes_gsp_phase(void);
+void hermes_gsp_set_state(bool online, enum hermes_phase phase);
+
 #endif /* HERMES_KMOD_H */

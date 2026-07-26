@@ -10,7 +10,7 @@ obj-m += nvidia-peermem.o
 nvidia-y := hermes_core_mod.o hermes_bringup.o nvidia_main.o
 nvidia-modeset-y := hermes_modeset_main.o
 nvidia-uvm-y := hermes_uvm_main.o
-nvidia-drm-y := hermes_drm_main.o
+nvidia-drm-y := hermes_drm_logic.o hermes_drm_main.o
 nvidia-peermem-y := hermes_peermem_main.o
 
 ccflags-y += -I$(src)/include
@@ -21,4 +21,15 @@ all:
 clean:
 	$(MAKE) -C /lib/modules/$(shell uname -r)/build M=$(CURDIR) clean
 
-.PHONY: all clean
+# Host unit tests (no kernel headers required beyond libc).
+host-test:
+	$(CC) -std=c11 -Wall -Wextra -O2 -DHERMES_HOST_TEST \
+		-I. -Iinclude \
+		tests/test_bringup_host.c hermes_bringup.c -o tests/test_bringup_host
+	$(CC) -std=c11 -Wall -Wextra -O2 -DHERMES_HOST_TEST \
+		-I. -Iinclude \
+		tests/test_drm_host.c hermes_drm_logic.c -o tests/test_drm_host
+	./tests/test_bringup_host
+	./tests/test_drm_host
+
+.PHONY: all clean host-test

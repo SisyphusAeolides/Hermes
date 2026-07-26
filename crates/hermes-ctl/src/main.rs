@@ -23,16 +23,24 @@ use hermes_cccl::{
     THRUST_PUBLIC_HEADERS, hermes_sort,
 };
 use hermes_cuda::{
-    cuDeviceGetCount, cuInit, hermes_cuda_cccl_version, hermes_cuda_reset,
-    hermes_cuda_set_gsp_online, CUDA_ERROR_HERMES_GSP_OFFLINE, CUDA_SUCCESS,
+    cuCtxCreate_v2, cuCtxDestroy_v2, cuDeviceGetCount, cuEventCreate, cuEventDestroy_v2,
+    cuEventRecord, cuEventSynchronize, cuInit, cuLaunchKernel, cuMemAlloc_v2, cuMemFree_v2,
+    cuMemsetD8_v2, cuModuleGetFunction, cuModuleLoadData, cuModuleUnload, cuStreamCreate,
+    cuStreamDestroy_v2, cuStreamSynchronize, hermes_cuda_cccl_version,
+    hermes_cuda_driver_entry_count, hermes_cuda_reset, hermes_cuda_set_gsp_online,
+    CUDA_ERROR_HERMES_GSP_OFFLINE, CUDA_SUCCESS,
 };
 use hermes_drm::{
-    AtomicCommit, AtomicRequest, DisplayMode, DrmDevice, Framebuffer, PixelFormat,
+    page_flip, AtomicCommit, AtomicRequest, DisplayMode, DrmDevice, Framebuffer, PageFlipRequest,
+    PixelFormat,
 };
 use hermes_mesa::{
-    hermes_mesa_reset, hermes_mesa_set_gsp_online, hermes_present_solid_frame,
-    hermes_vulkan_api_version, hermes_vulkan_icd_library_path, vkCreateInstance,
-    vkDestroyInstance, vkEnumeratePhysicalDevices, VK_ERROR_INCOMPATIBLE_DRIVER, VK_SUCCESS,
+    hermes_mesa_reset, hermes_mesa_set_gsp_online, hermes_present_gem_flip,
+    hermes_present_solid_frame, hermes_vulkan_api_version, hermes_vulkan_icd_json,
+    hermes_vulkan_icd_library_path, vkCreateDevice, vkCreateInstance, vkDestroyDevice,
+    vkDestroyInstance, vkEnumeratePhysicalDevices, vkGetDeviceQueue,
+    vkGetPhysicalDeviceProperties, HermesVkPhysicalDeviceProperties,
+    VK_ERROR_INCOMPATIBLE_DRIVER, VK_SUCCESS,
 };
 
 fn main() {
@@ -74,10 +82,14 @@ fn main() {
             let mode = args.next().unwrap_or_else(|| "online".into());
             mesa_smoke(&mode);
         }
+        Some("stack-smoke") => stack_smoke(),
+        Some("icd-json") => {
+            print!("{}", hermes_vulkan_icd_json());
+        }
         _ => {
             println!("hermes-ctl — Hermes GSP control\n");
             println!(
-                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online> | drm-smoke <offline|online|dual> | mesa-smoke <offline|online>"
+                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online|deep> | drm-smoke <offline|online|dual|gem> | mesa-smoke <offline|online|gem> | stack-smoke | icd-json"
             );
         }
     }
@@ -316,8 +328,60 @@ fn cuda_smoke(mode: &str) {
             hermes_cuda_reset();
             println!("PASS");
         }
+        "deep" => {
+            hermes_cuda_set_gsp_online(true);
+            assert_eq!(cuInit(0), CUDA_SUCCESS);
+            let mut ctx = 0u64;
+            assert_eq!(cuCtxCreate_v2(&mut ctx, 0, 0), CUDA_SUCCESS);
+            let mut stream = 0u64;
+            assert_eq!(cuStreamCreate(&mut stream, 0), CUDA_SUCCESS);
+            let mut ev = 0u64;
+            assert_eq!(cuEventCreate(&mut ev, 0), CUDA_SUCCESS);
+            let image = b"\0";
+            let mut module = 0u64;
+            assert_eq!(cuModuleLoadData(&mut module, image.as_ptr()), CUDA_SUCCESS);
+            let mut func = 0u64;
+            let name = b"hermes_kernel\0";
+            assert_eq!(
+                cuModuleGetFunction(&mut func, module, name.as_ptr()),
+                CUDA_SUCCESS
+            );
+            assert_eq!(
+                cuLaunchKernel(
+                    func,
+                    1,
+                    1,
+                    1,
+                    32,
+                    1,
+                    1,
+                    0,
+                    stream,
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut()
+                ),
+                CUDA_SUCCESS
+            );
+            assert_eq!(cuEventRecord(ev, stream), CUDA_SUCCESS);
+            assert_eq!(cuEventSynchronize(ev), CUDA_SUCCESS);
+            let mut dptr = 0u64;
+            assert_eq!(cuMemAlloc_v2(&mut dptr, 64), CUDA_SUCCESS);
+            assert_eq!(cuMemsetD8_v2(dptr, 0xcd, 64), CUDA_SUCCESS);
+            assert_eq!(cuStreamSynchronize(stream), CUDA_SUCCESS);
+            assert_eq!(cuMemFree_v2(dptr), CUDA_SUCCESS);
+            assert_eq!(cuModuleUnload(module), CUDA_SUCCESS);
+            assert_eq!(cuEventDestroy_v2(ev), CUDA_SUCCESS);
+            assert_eq!(cuStreamDestroy_v2(stream), CUDA_SUCCESS);
+            assert_eq!(cuCtxDestroy_v2(ctx), CUDA_SUCCESS);
+            println!(
+                "cuda deep: stream+event+module+launch+memset ok (entries={})",
+                hermes_cuda_driver_entry_count()
+            );
+            hermes_cuda_reset();
+            println!("PASS");
+        }
         other => {
-            eprintln!("use offline|online, got {other}");
+            eprintln!("use offline|online|deep, got {other}");
             std::process::exit(2);
         }
     }
@@ -443,8 +507,53 @@ fn drm_smoke(mode: &str) {
             );
             println!("PASS");
         }
+        "gem" => {
+            let mut dev = DrmDevice::virtual_desktop(true);
+            let dumb = dev.create_dumb(1920, 1080, 32).expect("dumb");
+            println!(
+                "dumb: handle={} pitch={} size={}",
+                dumb.handle, dumb.pitch, dumb.size
+            );
+            dev.gems
+                .get_mut(dumb.handle)
+                .expect("gem")
+                .fill_solid_xrgb8888(0x00ff_0000)
+                .expect("fill");
+            let fb_id = dev
+                .add_fb_from_gem(dumb.handle, PixelFormat::Xrgb8888)
+                .expect("fb");
+            let mut atom = AtomicCommit::new();
+            atom.commit(
+                &mut dev,
+                &AtomicRequest {
+                    connector_id: 1,
+                    crtc_id: 1,
+                    plane_id: 1,
+                    fb_id,
+                    mode: DisplayMode::fhd_60(),
+                    active: true,
+                },
+            )
+            .expect("modeset");
+            let flip = page_flip(
+                &mut atom,
+                &mut dev,
+                &PageFlipRequest {
+                    crtc_id: 1,
+                    fb_id,
+                    flags: PageFlipRequest::FLAG_EVENT,
+                },
+            )
+            .expect("flip");
+            let vb = dev.vblank.pop_event().expect("vblank");
+            println!(
+                "gem flip: atom_seq={} vblank_seq={} fb={}",
+                flip.sequence, vb.sequence, vb.fb_id
+            );
+            println!("PASS");
+        }
         other => {
-            eprintln!("use offline|online|dual, got {other}");
+            eprintln!("use offline|online|dual|gem, got {other}");
             std::process::exit(2);
         }
     }
@@ -481,16 +590,57 @@ fn mesa_smoke(mode: &str) {
                 VK_SUCCESS
             );
             println!("physical devices: {count}");
+            let mut phys = 0u64;
+            count = 1;
+            assert_eq!(
+                vkEnumeratePhysicalDevices(inst, &mut count, &mut phys),
+                VK_SUCCESS
+            );
+            let mut props = HermesVkPhysicalDeviceProperties {
+                api_version: 0,
+                driver_version: 0,
+                vendor_id: 0,
+                device_id: 0,
+                device_type: 0,
+            };
+            assert_eq!(vkGetPhysicalDeviceProperties(phys, &mut props), VK_SUCCESS);
+            println!(
+                "physdev vendor={:#x} device={:#x}",
+                props.vendor_id, props.device_id
+            );
+            let mut dev = 0u64;
+            assert_eq!(
+                vkCreateDevice(phys, core::ptr::null(), core::ptr::null(), &mut dev),
+                VK_SUCCESS
+            );
+            let mut q = 0u64;
+            assert_eq!(vkGetDeviceQueue(dev, 0, 0, &mut q), VK_SUCCESS);
             let seq = hermes_present_solid_frame().expect("present");
-            println!("present solid frame: sequence={seq}");
+            println!("present solid frame: sequence={seq} queue={q}");
+            vkDestroyDevice(dev, core::ptr::null());
             vkDestroyInstance(inst, core::ptr::null());
             hermes_mesa_reset();
             println!("PASS");
         }
+        "gem" => {
+            hermes_mesa_set_gsp_online(true);
+            let seq = hermes_present_gem_flip(0x0000_ff00).expect("gem flip");
+            println!("mesa gem flip sequence={seq}");
+            hermes_mesa_reset();
+            println!("PASS");
+        }
         other => {
-            eprintln!("use offline|online, got {other}");
+            eprintln!("use offline|online|gem, got {other}");
             std::process::exit(2);
         }
     }
+}
+
+fn stack_smoke() {
+    println!("=== stack-smoke: GSP-gated CUDA + DRM + Mesa ===");
+    cuda_smoke("deep");
+    drm_smoke("gem");
+    mesa_smoke("gem");
+    println!("stack-smoke: PASS (all layers)");
 }
 

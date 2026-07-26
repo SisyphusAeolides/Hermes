@@ -1,5 +1,7 @@
 //! DRM framebuffer objects.
 
+use crate::gem::GemObject;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum PixelFormat {
@@ -23,7 +25,7 @@ pub struct Framebuffer {
     pub height: u32,
     pub pitch: u32,
     pub format: PixelFormat,
-    /// Host handle / GEM-like id until real buffer objects exist.
+    /// GEM handle backing this FB (or opaque host BO id).
     pub bo_handle: u64,
 }
 
@@ -51,6 +53,28 @@ impl Framebuffer {
         })
     }
 
+    /// Bind a GEM dumb buffer as a framebuffer.
+    pub fn from_gem(
+        id: u32,
+        gem: &GemObject,
+        format: PixelFormat,
+    ) -> Result<Self, FramebufferError> {
+        if gem.width == 0 || gem.height == 0 {
+            return Err(FramebufferError::InvalidSize);
+        }
+        if gem.bpp < format.bytes_per_pixel() * 8 {
+            return Err(FramebufferError::FormatMismatch);
+        }
+        Ok(Self {
+            id,
+            width: gem.width,
+            height: gem.height,
+            pitch: gem.pitch,
+            format,
+            bo_handle: gem.handle as u64,
+        })
+    }
+
     pub fn size_bytes(self) -> u64 {
         (self.pitch as u64) * (self.height as u64)
     }
@@ -59,6 +83,7 @@ impl Framebuffer {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FramebufferError {
     InvalidSize,
+    FormatMismatch,
 }
 
 #[cfg(test)]

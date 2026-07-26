@@ -11,6 +11,9 @@ linux/kmod/Module.symvers
 linux/kmod/modules.order
 linux/kmod/.tmp_versions/
 linux/kmod/*.o.ur-safe
+linux/kmod/tests/test_bringup_host
+linux/kmod/tests/test_drm_host
+staging/
 
 **/*.rs.bk
 .cargo-cache/

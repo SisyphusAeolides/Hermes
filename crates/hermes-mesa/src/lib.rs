@@ -8,22 +8,33 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 
 use hermes_drm::{
-    AtomicCommit, AtomicRequest, DisplayMode, DrmDevice, Framebuffer, PixelFormat,
+    page_flip, AtomicCommit, AtomicRequest, DisplayMode, DrmDevice, Framebuffer,
+    PageFlipRequest, PixelFormat,
+};
+
+pub mod icd;
+
+pub use icd::{
+    default_icd_json, vulkan_icd_json, HERMES_ICD_JSON_NAME, ICD_LIBRARY_BASENAME,
+    ICD_SEARCH_PATHS, NVIDIA_ICD_JSON_NAME, NVIDIA_VULKAN_SONAME,
 };
 
 static GSP_ONLINE: AtomicBool = AtomicBool::new(false);
 static INSTANCE_COUNT: AtomicU32 = AtomicU32::new(0);
+static DEVICE_COUNT: AtomicU32 = AtomicU32::new(0);
 
 #[derive(Default)]
 struct MesaState {
     drm: Option<DrmDevice>,
     vk_instances: u32,
+    vk_devices: u32,
     gl_contexts: u32,
 }
 
 static STATE: Mutex<MesaState> = Mutex::new(MesaState {
     drm: None,
     vk_instances: 0,
+    vk_devices: 0,
     gl_contexts: 0,
 });
 
@@ -59,9 +70,11 @@ pub fn hermes_mesa_reset() {
     with_state(|s| {
         s.drm = None;
         s.vk_instances = 0;
+        s.vk_devices = 0;
         s.gl_contexts = 0;
     });
     INSTANCE_COUNT.store(0, Ordering::SeqCst);
+    DEVICE_COUNT.store(0, Ordering::SeqCst);
 }
 
 // ─── Vulkan ICD-shaped API (subset) ───────────────────────────────────────
@@ -131,6 +144,90 @@ pub extern "C" fn vkEnumeratePhysicalDevices(
     VK_SUCCESS
 }
 
+/// Physical device properties (compact host view).
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct HermesVkPhysicalDeviceProperties {
+    pub api_version: u32,
+    pub driver_version: u32,
+    pub vendor_id: u32,
+    pub device_id: u32,
+    pub device_type: u32, // 2 = DISCRETE_GPU
+}
+
+#[no_mangle]
+pub extern "C" fn vkGetPhysicalDeviceProperties(
+    physical_device: u64,
+    props: *mut HermesVkPhysicalDeviceProperties,
+) -> VkResult {
+    if props.is_null() || physical_device == 0 {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    if !hermes_mesa_gsp_online() {
+        return VK_ERROR_DEVICE_LOST;
+    }
+    unsafe {
+        *props = HermesVkPhysicalDeviceProperties {
+            api_version: hermes_vulkan_api_version(),
+            driver_version: 1,
+            vendor_id: 0x10de,
+            device_id: 0x1fb9, // sample Turing
+            device_type: 2,
+        };
+    }
+    VK_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn vkCreateDevice(
+    physical_device: u64,
+    _p_create_info: *const u8,
+    _p_allocator: *const u8,
+    p_device: *mut u64,
+) -> VkResult {
+    if p_device.is_null() || physical_device == 0 {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    if !hermes_mesa_gsp_online() {
+        return VK_ERROR_DEVICE_LOST;
+    }
+    let id = DEVICE_COUNT.fetch_add(1, Ordering::SeqCst) as u64 + 1;
+    with_state(|s| s.vk_devices = s.vk_devices.saturating_add(1));
+    unsafe {
+        *p_device = id;
+    }
+    VK_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn vkDestroyDevice(device: u64, _p_allocator: *const u8) {
+    if device == 0 {
+        return;
+    }
+    with_state(|s| {
+        s.vk_devices = s.vk_devices.saturating_sub(1);
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn vkGetDeviceQueue(
+    device: u64,
+    _queue_family_index: u32,
+    _queue_index: u32,
+    p_queue: *mut u64,
+) -> VkResult {
+    if p_queue.is_null() || device == 0 {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    if !hermes_mesa_gsp_online() {
+        return VK_ERROR_DEVICE_LOST;
+    }
+    unsafe {
+        *p_queue = device; // single software queue token
+    }
+    VK_SUCCESS
+}
+
 // ─── GL dispatch subset ───────────────────────────────────────────────────
 
 pub type GLenum = u32;
@@ -171,15 +268,22 @@ pub fn hermes_present_solid_frame() -> Result<u64, present::PresentError> {
     present::present_solid()
 }
 
+/// Present via dumb GEM BO + atomic + page-flip (full software display path).
+pub fn hermes_present_gem_flip(color: u32) -> Result<u64, present::PresentError> {
+    present::present_gem_flip(color)
+}
+
 pub mod present {
     use super::*;
-    use hermes_drm::CommitError;
+    use hermes_drm::{CommitError, FlipError};
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub enum PresentError {
         Offline,
         Modeset(CommitError),
+        Flip(FlipError),
         NoDrm,
+        Gem,
     }
 
     pub fn present_solid() -> Result<u64, PresentError> {
@@ -199,7 +303,7 @@ pub mod present {
                 connector_id: 1,
                 crtc_id: 1,
                 plane_id: 1,
-                fb_id: 10,
+                fb_id: drm.framebuffers[0].id,
                 mode: DisplayMode::fhd_60(),
                 active: true,
             };
@@ -209,16 +313,67 @@ pub mod present {
             Ok(r.sequence)
         })
     }
+
+    pub fn present_gem_flip(color: u32) -> Result<u64, PresentError> {
+        if !hermes_mesa_gsp_online() {
+            return Err(PresentError::Offline);
+        }
+        with_state(|s| {
+            let drm = s.drm.get_or_insert_with(|| DrmDevice::virtual_desktop(true));
+            drm.set_gsp_online(true);
+            let dumb = drm
+                .create_dumb(1920, 1080, 32)
+                .map_err(|_| PresentError::Gem)?;
+            drm.gems
+                .get_mut(dumb.handle)
+                .ok_or(PresentError::Gem)?
+                .fill_solid_xrgb8888(color)
+                .map_err(|_| PresentError::Gem)?;
+            let fb_id = drm
+                .add_fb_from_gem(dumb.handle, PixelFormat::Xrgb8888)
+                .map_err(|_| PresentError::Gem)?;
+            let mut atom = AtomicCommit::new();
+            if drm.active_crtc_count() == 0 {
+                atom.commit(
+                    drm,
+                    &AtomicRequest {
+                        connector_id: 1,
+                        crtc_id: 1,
+                        plane_id: 1,
+                        fb_id,
+                        mode: DisplayMode::fhd_60(),
+                        active: true,
+                    },
+                )
+                .map_err(PresentError::Modeset)?;
+            }
+            let r = page_flip(
+                &mut atom,
+                drm,
+                &PageFlipRequest {
+                    crtc_id: 1,
+                    fb_id,
+                    flags: PageFlipRequest::FLAG_EVENT,
+                },
+            )
+            .map_err(PresentError::Flip)?;
+            Ok(r.sequence)
+        })
+    }
 }
 
-/// ICD discovery info (for future `nvidia_icd.json` / Mesa loader).
+/// ICD discovery info (for `nvidia_icd.json` / Mesa loader).
 pub fn hermes_vulkan_icd_library_path() -> &'static str {
-    "libhermes_mesa.so"
+    ICD_LIBRARY_BASENAME
 }
 
 pub fn hermes_vulkan_api_version() -> u32 {
     // Vulkan 1.3 encoded
     (1 << 22) | (3 << 12)
+}
+
+pub fn hermes_vulkan_icd_json() -> String {
+    default_icd_json()
 }
 
 #[cfg(test)]
@@ -272,6 +427,47 @@ mod tests {
         hermes_mesa_set_gsp_online(true);
         assert_eq!(glGetError(), 0);
         assert!(hermes_gl_create_context().is_some());
+        hermes_mesa_reset();
+    }
+
+    #[test]
+    fn device_and_queue_require_gsp() {
+        let _g = T.lock().unwrap();
+        hermes_mesa_reset();
+        let mut dev = 0u64;
+        assert_eq!(
+            vkCreateDevice(1, core::ptr::null(), core::ptr::null(), &mut dev),
+            VK_ERROR_DEVICE_LOST
+        );
+        hermes_mesa_set_gsp_online(true);
+        assert_eq!(
+            vkCreateDevice(1, core::ptr::null(), core::ptr::null(), &mut dev),
+            VK_SUCCESS
+        );
+        let mut q = 0u64;
+        assert_eq!(vkGetDeviceQueue(dev, 0, 0, &mut q), VK_SUCCESS);
+        assert_ne!(q, 0);
+        let mut props = HermesVkPhysicalDeviceProperties {
+            api_version: 0,
+            driver_version: 0,
+            vendor_id: 0,
+            device_id: 0,
+            device_type: 0,
+        };
+        assert_eq!(vkGetPhysicalDeviceProperties(1, &mut props), VK_SUCCESS);
+        assert_eq!(props.vendor_id, 0x10de);
+        vkDestroyDevice(dev, core::ptr::null());
+        hermes_mesa_reset();
+    }
+
+    #[test]
+    fn gem_flip_present() {
+        let _g = T.lock().unwrap();
+        hermes_mesa_reset();
+        hermes_mesa_set_gsp_online(true);
+        let seq = hermes_present_gem_flip(0x0000_00ff).unwrap();
+        assert!(seq >= 1);
+        assert!(hermes_vulkan_icd_json().contains("libhermes_mesa"));
         hermes_mesa_reset();
     }
 }

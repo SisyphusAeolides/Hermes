@@ -1,10 +1,12 @@
-//! DRM device aggregate — connectors, CRTCs, planes, framebuffers.
+//! DRM device aggregate — connectors, CRTCs, planes, framebuffers, GEM.
 
 use alloc::vec::Vec;
 
 use crate::connector::Connector;
 use crate::crtc::Crtc;
-use crate::framebuffer::Framebuffer;
+use crate::framebuffer::{Framebuffer, FramebufferError, PixelFormat};
+use crate::gem::{DumbCreateRequest, DumbCreateResult, GemError, GemManager};
+use crate::pageflip::VblankState;
 use crate::plane::Plane;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -12,6 +14,8 @@ pub enum DrmError {
     GspOffline,
     NotFound,
     Busy,
+    Gem(GemError),
+    Framebuffer(FramebufferError),
 }
 
 #[derive(Clone, Debug)]
@@ -21,6 +25,9 @@ pub struct DrmDevice {
     pub crtcs: Vec<Crtc>,
     pub planes: Vec<Plane>,
     pub framebuffers: Vec<Framebuffer>,
+    pub gems: GemManager,
+    pub vblank: VblankState,
+    next_fb_id: u32,
 }
 
 impl DrmDevice {
@@ -32,6 +39,9 @@ impl DrmDevice {
             crtcs: alloc::vec![Crtc::new(1, 1)],
             planes: alloc::vec![Plane::primary(1, 0b1)],
             framebuffers: Vec::new(),
+            gems: GemManager::new(),
+            vblank: VblankState::new(),
+            next_fb_id: 1,
         }
     }
 
@@ -49,6 +59,9 @@ impl DrmDevice {
                 Plane::primary(2, 0b10),
             ],
             framebuffers: Vec::new(),
+            gems: GemManager::new(),
+            vblank: VblankState::new(),
+            next_fb_id: 1,
         }
     }
 
@@ -65,6 +78,9 @@ impl DrmDevice {
             for c in &mut self.connectors {
                 c.crtc_id = None;
             }
+            self.gems.clear();
+            self.framebuffers.clear();
+            self.vblank = VblankState::new();
         }
     }
 
@@ -74,6 +90,49 @@ impl DrmDevice {
 
     pub fn connector_count(&self) -> usize {
         self.connectors.len()
+    }
+
+    /// Create a dumb BO (GSP-gated).
+    pub fn create_dumb(
+        &mut self,
+        width: u32,
+        height: u32,
+        bpp: u32,
+    ) -> Result<DumbCreateResult, DrmError> {
+        self.gems
+            .create_dumb(
+                self.gsp_online,
+                &DumbCreateRequest {
+                    width,
+                    height,
+                    bpp,
+                },
+            )
+            .map_err(DrmError::Gem)
+    }
+
+    /// Create a framebuffer backed by an existing GEM handle.
+    pub fn add_fb_from_gem(
+        &mut self,
+        gem_handle: u32,
+        format: PixelFormat,
+    ) -> Result<u32, DrmError> {
+        if !self.gsp_online {
+            return Err(DrmError::GspOffline);
+        }
+        let gem = self
+            .gems
+            .get(gem_handle)
+            .ok_or(DrmError::Gem(GemError::InvalidHandle))?;
+        let id = self.next_fb_id;
+        self.next_fb_id = self.next_fb_id.wrapping_add(1).max(1);
+        let fb = Framebuffer::from_gem(id, gem, format).map_err(DrmError::Framebuffer)?;
+        self.framebuffers.push(fb);
+        Ok(id)
+    }
+
+    pub fn destroy_dumb(&mut self, handle: u32) -> Result<(), DrmError> {
+        self.gems.destroy(handle).map_err(DrmError::Gem)
     }
 }
 
@@ -105,5 +164,19 @@ mod tests {
         d.set_gsp_online(false);
         assert!(!d.gsp_online);
         assert_eq!(d.active_crtc_count(), 0);
+    }
+
+    #[test]
+    fn dumb_to_fb_pipeline() {
+        let mut d = DrmDevice::virtual_desktop(true);
+        let dumb = d.create_dumb(1920, 1080, 32).unwrap();
+        let fb_id = d
+            .add_fb_from_gem(dumb.handle, PixelFormat::Xrgb8888)
+            .unwrap();
+        assert_eq!(fb_id, 1);
+        assert_eq!(d.framebuffers[0].bo_handle, dumb.handle as u64);
+        d.set_gsp_online(false);
+        assert_eq!(d.gems.count(), 0);
+        assert!(d.framebuffers.is_empty());
     }
 }

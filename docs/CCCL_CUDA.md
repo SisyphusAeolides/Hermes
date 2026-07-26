@@ -49,14 +49,22 @@ cuInit / cudaGetDeviceCount
   GSP Online?  ──no──►  CUDA_ERROR_HERMES_GSP_OFFLINE
         │ yes
         ▼
-  driver init → context → alloc/memcpy/module
+  driver init → context → alloc/memcpy/module/stream/event/launch
 ```
+
+Driver surface currently includes (GSP-gated): `cuInit`, device query/attrs,
+`cuCtx*`, `cuMem*`, `cuMemcpy*`, `cuMemset*`, `cuModule*` / `cuLaunchKernel`,
+`cuStream*`, `cuEvent*`, plus runtime aliases (`cudaMalloc`, `cudaStream*`, …).
 
 Host Thrust algorithms can run on CPU without a device; they still do not
 claim a GPU.
 
+```sh
+cargo run -p hermes-ctl --bin hermes-ctl -- cuda-smoke deep
+```
+
 ## Formal models
 
-- `formal/idris2/Cccl.idr`
+- `formal/idris2/Cccl.idr`, `formal/idris2/CudaStream.idr`
 - `formal/agda/Cccl.agda`
 - `formal/austral/Cccl.aui` + `Cccl.aum` (linear driver/context/buffer)

@@ -36,3 +36,25 @@ virtualDesktopObjects = 3  -- connector + crtc + primary plane
 public export
 dualHeadObjects : Nat
 dualHeadObjects = 6
+
+||| GEM dumb buffers also require Online.
+public export
+data GemOp = DumbCreate | Map | Destroy
+
+public export
+gemAllowed : GspGate -> GemOp -> Bool
+gemAllowed GspOffline _ = False
+gemAllowed GspOnline _ = True
+
+public export
+data PageFlip : Type where
+  MkFlip :
+    (gsp : GspGate) ->
+    (fb : Nat) ->
+    {auto online : gsp = GspOnline} ->
+    PageFlip
+
+public export
+flipNeedsFb : Nat -> Bool
+flipNeedsFb Z = False
+flipNeedsFb _ = True

@@ -106,14 +106,16 @@ open CUDA **C++ library** layer; `hermes-cuda` is the driver/runtime shell and
 
 ```sh
 cargo test -p hermes-drm -p hermes-mesa
-cargo run -p hermes-ctl -- drm-smoke online
-cargo run -p hermes-ctl -- drm-smoke dual
-cargo run -p hermes-ctl -- mesa-smoke offline
-cargo run -p hermes-ctl -- mesa-smoke online
+cargo run -p hermes-ctl --bin hermes-ctl -- drm-smoke gem
+cargo run -p hermes-ctl --bin hermes-ctl -- mesa-smoke gem
+cargo run -p hermes-ctl --bin hermes-ctl -- cuda-smoke deep
+cargo run -p hermes-ctl --bin hermes-ctl -- stack-smoke
+make -C linux/kmod host-test
+sh scripts/stage-dropin.sh
 ```
 
-See [`docs/DRM_MESA.md`](docs/DRM_MESA.md). Atomic modeset and the Vulkan ICD
-surface only succeed when GSP is Online; Offline is fail-closed.
+See [`docs/DRM_MESA.md`](docs/DRM_MESA.md). Atomic modeset, dumb GEM, page-flip,
+Vulkan ICD, and CUDA streams only succeed when GSP is Online; Offline is fail-closed.
 
 ## Drop-in install (Linux)
 

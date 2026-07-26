@@ -15,10 +15,19 @@ Both are **GSP-gated**: Offline never applies modeset or advertises a GPU.
 - `DrmDevice::virtual_dual_head` — dual CRTC / plane / connector
 - `AtomicCommit::commit` — fail-closed atomic apply
 - `AtomicCommit::disable_crtc` — blank a pipe
+- `GemManager` / `create_dumb` — GEM-like dumb buffers (pitch 64-aligned)
+- `add_fb_from_gem` — FB from dumb handle
+- `page_flip` + software `VblankState` — flip with event sequence
 
-This is **not** a full in-kernel DRM driver yet. It is the clean-room modeset
-foundation that will back `nvidia-drm` / a future DRM character device once
-GSP Online is real on silicon.
+## Kernel `nvidia-drm.ko`
+
+- Misc char device `/dev/nvidia-drm`
+- Ioctls: `STATUS`, `DUMB_CREATE`, `ATOMIC`, `DISABLE_CRTC` (`hermes_drm_uapi.h`)
+- Gates every call on `hermes_gsp_is_online()` exported by `nvidia.ko`
+- Host-testable logic: `make -C linux/kmod host-test`
+
+This is **not** full DRM subsystem registration yet (no `drm_device` / KMS
+connector sysfs). It is the fail-closed ioctl + userspace state machine pair.
 
 ## hermes-mesa
 
@@ -41,11 +50,16 @@ ICD library name (for future `nvidia_icd.json` / Mesa loader):
 ## Smoke
 
 ```sh
-cargo run -p hermes-ctl -- drm-smoke offline
-cargo run -p hermes-ctl -- drm-smoke online
-cargo run -p hermes-ctl -- drm-smoke dual
-cargo run -p hermes-ctl -- mesa-smoke offline
-cargo run -p hermes-ctl -- mesa-smoke online
+cargo run -p hermes-ctl --bin hermes-ctl -- drm-smoke offline
+cargo run -p hermes-ctl --bin hermes-ctl -- drm-smoke online
+cargo run -p hermes-ctl --bin hermes-ctl -- drm-smoke dual
+cargo run -p hermes-ctl --bin hermes-ctl -- drm-smoke gem
+cargo run -p hermes-ctl --bin hermes-ctl -- mesa-smoke offline
+cargo run -p hermes-ctl --bin hermes-ctl -- mesa-smoke online
+cargo run -p hermes-ctl --bin hermes-ctl -- mesa-smoke gem
+cargo run -p hermes-ctl --bin hermes-ctl -- stack-smoke
+cargo run -p hermes-ctl --bin hermes-ctl -- icd-json
+sh scripts/stage-dropin.sh
 ```
 
 ## Honesty
