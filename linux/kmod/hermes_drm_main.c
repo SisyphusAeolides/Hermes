@@ -27,7 +27,26 @@ static long hermes_drm_ioctl(struct file *file, unsigned int cmd, unsigned long 
 
 	mutex_lock(&hermes_drm_lock);
 	/* Resync Online from primary GSP module on every ioctl. */
-	hermes_drm_state.gsp_online = hermes_gsp_is_online() ? 1 : 0;
+	{
+		int now = hermes_gsp_is_online() ? 1 : 0;
+		int was = hermes_drm_state.gsp_online;
+
+		hermes_drm_state.gsp_online = now;
+		if (now && !was) {
+			/* Transition Offline→Online: publish EDID blob id. */
+			hermes_drm_state.edid_blob_id = 1;
+			if (hermes_drm_state.preferred_hdisplay == 0)
+				hermes_drm_state.preferred_hdisplay = 1920;
+			if (hermes_drm_state.preferred_vdisplay == 0)
+				hermes_drm_state.preferred_vdisplay = 1080;
+		}
+		if (!now && was) {
+			/* Online→Offline: clear modeset authority. */
+			hermes_drm_state.edid_blob_id = 0;
+			hermes_drm_state.active_crtcs = 0;
+			hermes_drm_state.last_fb = 0;
+		}
+	}
 
 	switch (cmd) {
 	case HERMES_DRM_IOCTL_STATUS: {

@@ -811,6 +811,32 @@ pub extern "C" fn cuDeviceGetAttribute(
 }
 
 #[no_mangle]
+pub extern "C" fn cuDeviceGetUuid(uuid: *mut u8, device: i32) -> CudaResult {
+    if uuid.is_null() {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    with_state(|s| {
+        if !s.driver_init {
+            return CUDA_ERROR_NOT_INITIALIZED;
+        }
+        if device < 0 || device as usize >= s.devices.len() {
+            return CUDA_ERROR_INVALID_DEVICE;
+        }
+        // 16-byte UUID shell from device index (not a forged board serial).
+        let mut u = [0u8; 16];
+        u[0] = 0x48; // 'H'
+        u[1] = 0x52; // 'R'
+        u[2] = 0x4d; // 'M'
+        u[3] = 0x53; // 'S'
+        u[15] = device as u8;
+        unsafe {
+            core::ptr::copy_nonoverlapping(u.as_ptr(), uuid, 16);
+        }
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
 pub extern "C" fn cuDeviceGetName(name: *mut u8, len: i32, device: i32) -> CudaResult {
     if name.is_null() || len <= 0 {
         return CUDA_ERROR_INVALID_VALUE;
@@ -2011,8 +2037,8 @@ pub extern "C" fn cudaRuntimeGetVersion(runtime_version: *mut i32) -> CudaResult
 
 /// Count of driver entry points Hermes currently exports (for drop-in dashboards).
 pub fn hermes_cuda_driver_entry_count() -> usize {
-    // + host alloc, peer, IPC, pointer attrs
-    68
+    // + host alloc, peer, IPC, pointer attrs, uuid
+    69
 }
 
 pub fn hermes_cuda_host_sort_i32(data: &mut [i32]) {

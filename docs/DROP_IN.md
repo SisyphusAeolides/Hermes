@@ -12,7 +12,7 @@ cargo run -p hermes-ctl --bin hermes-ctl -- dropin-complete
 ```
 
 `dropin-parity` reports named-surface coverage against `DROP_IN_PARITY_TARGET`
-(currently **29** catalog entries = 100% of the advertised open-stack name set).
+(currently **30** catalog entries = 100% of the advertised open-stack name set).
 
 | Component | Role |
 |---|---|
@@ -86,6 +86,11 @@ HERMES_SIM_PROMOTE=1 sudo -E sh scripts/load-kmod.sh
 Companions (`nvidia-modeset` / `uvm` / `uvm-tools` / `peermem`) expose STATUS
 ioctls. `module_mask` ORs all live companions. `allow_sim_promote=1` enables
 `SIM_PROMOTE` / `DEMOTE` on `/dev/nvidiactl` for Turing+ host GPUs.
+
+```sh
+# Rust end-to-end: SIM_PROMOTE → companion Online → live EDID → DEMOTE
+cargo run -p hermes-ctl --bin hermes-ctl -- kmod-online-smoke
+```
 
 ### DRM EDID via kmod
 

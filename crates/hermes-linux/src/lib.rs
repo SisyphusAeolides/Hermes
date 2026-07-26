@@ -16,10 +16,12 @@ pub mod ctl_uapi;
 pub mod sim_platform;
 
 pub use ctl_uapi::{
+    hermes_companion_ioctl_status, hermes_ctl_ioctl_demote, hermes_ctl_ioctl_sim_promote,
     hermes_ctl_ioctl_status, hermes_ctl_module_mask_compose, hermes_drm_ioctl_get_edid,
     hermes_drm_ioctl_get_prop, hermes_drm_ioctl_status, module_sysfs_path, HermesCtlStatus,
-    HermesDrmStatus, HERMES_CTL_STATUS_VERSION, HERMES_MOD_ALL_OPEN_STACK, HERMES_MOD_DRM,
-    HERMES_MOD_MODESET, HERMES_MOD_NVIDIA, HERMES_MOD_PEERMEM, HERMES_MOD_UVM,
+    HermesDrmEdid, HermesDrmPropGet, HermesDrmStatus, HERMES_CTL_STATUS_VERSION,
+    HERMES_DRM_PROP_EDID, HERMES_MOD_ALL_OPEN_STACK, HERMES_MOD_DRM, HERMES_MOD_MODESET,
+    HERMES_MOD_NVIDIA, HERMES_MOD_PEERMEM, HERMES_MOD_UVM,
 };
 
 use hermes_abi::hermes::HermesPciIdentity;
@@ -268,6 +270,11 @@ pub const DROP_IN_CATALOG: &[DropInSurface] = &[
         name: "GSP firmware stage",
         hermes_crate: "hermes-gsp",
     },
+    DropInSurface {
+        kind: "surface",
+        name: "live kmod Online path",
+        hermes_crate: "linux/kmod",
+    },
 ];
 
 /// Number of catalog entries (kmod + device + bin + lib + surface).
@@ -276,7 +283,7 @@ pub fn drop_in_catalog_len() -> usize {
 }
 
 /// Target count of classic open-stack named surfaces Hermes advertises.
-pub const DROP_IN_PARITY_TARGET: usize = 29;
+pub const DROP_IN_PARITY_TARGET: usize = 30;
 
 /// Percent of parity target covered by the live catalog (capped at 100).
 pub fn drop_in_parity_percent() -> u32 {

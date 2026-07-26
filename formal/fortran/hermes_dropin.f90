@@ -41,7 +41,7 @@ contains
 
   pure integer(i32) function catalog_size() result(n)
     ! Matches hermes_linux::DROP_IN_PARITY_TARGET / DROP_IN_CATALOG length.
-    n = 29
+    n = 30
   end function catalog_size
 
   pure type(session_t) function close_session(s_in) result(s)

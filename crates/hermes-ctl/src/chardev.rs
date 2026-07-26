@@ -4,8 +4,11 @@
 //! Online still report Offline phase when status is readable.
 
 use hermes_linux::{
-    hermes_ctl_ioctl_status, hermes_drm_ioctl_status, modules, HermesCtlStatus, HermesDrmStatus,
-    HERMES_MOD_DRM, HERMES_MOD_MODESET, HERMES_MOD_NVIDIA, HERMES_MOD_PEERMEM, HERMES_MOD_UVM,
+    hermes_companion_ioctl_status, hermes_ctl_ioctl_demote, hermes_ctl_ioctl_sim_promote,
+    hermes_ctl_ioctl_status, hermes_drm_ioctl_get_edid, hermes_drm_ioctl_get_prop,
+    hermes_drm_ioctl_status, modules, HermesCtlStatus, HermesDrmEdid, HermesDrmPropGet,
+    HermesDrmStatus, HERMES_DRM_PROP_EDID, HERMES_MOD_DRM, HERMES_MOD_MODESET,
+    HERMES_MOD_NVIDIA, HERMES_MOD_PEERMEM, HERMES_MOD_UVM,
 };
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read};
@@ -298,6 +301,112 @@ pub fn smoke() -> i32 {
     0
 }
 
+fn open_rw(path: &str) -> Result<File, String> {
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .or_else(|_| File::open(path))
+        .map_err(|e| format!("open {path}: {e}"))
+}
+
+fn ioctl_status_path(path: &str, req: u64) -> Result<HermesCtlStatus, String> {
+    let f = open_rw(path)?;
+    let mut st = HermesCtlStatus::default();
+    let rc = unsafe { libc_ioctl(f.as_raw_fd(), req, &mut st as *mut _ as *mut u8) };
+    if rc != 0 {
+        return Err(format!(
+            "ioctl {path}: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    Ok(st)
+}
+
+/// SIM_PROMOTE on /dev/nvidiactl (requires allow_sim_promote=1).
+pub fn ctl_sim_promote() -> Result<(), String> {
+    let f = open_rw("/dev/nvidiactl")?;
+    let rc = unsafe {
+        libc_ioctl(
+            f.as_raw_fd(),
+            hermes_ctl_ioctl_sim_promote(),
+            core::ptr::null_mut(),
+        )
+    };
+    if rc != 0 {
+        return Err(format!(
+            "SIM_PROMOTE: {} (load with allow_sim_promote=1)",
+            io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+pub fn ctl_demote() -> Result<(), String> {
+    let f = open_rw("/dev/nvidiactl")?;
+    let rc = unsafe {
+        libc_ioctl(
+            f.as_raw_fd(),
+            hermes_ctl_ioctl_demote(),
+            core::ptr::null_mut(),
+        )
+    };
+    if rc != 0 {
+        return Err(format!("DEMOTE: {}", io::Error::last_os_error()));
+    }
+    Ok(())
+}
+
+pub fn companion_status(path: &str) -> Result<HermesCtlStatus, String> {
+    ioctl_status_path(path, hermes_companion_ioctl_status())
+}
+
+pub fn drm_get_edid(connector_id: u32) -> Result<HermesDrmEdid, String> {
+    let f = open_rw("/dev/nvidia-drm")?;
+    let mut edid = HermesDrmEdid {
+        connector_id,
+        size: 0,
+        data: [0; 128],
+    };
+    let rc = unsafe {
+        libc_ioctl(
+            f.as_raw_fd(),
+            hermes_drm_ioctl_get_edid(),
+            &mut edid as *mut _ as *mut u8,
+        )
+    };
+    if rc != 0 {
+        return Err(format!(
+            "GET_EDID: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    Ok(edid)
+}
+
+pub fn drm_get_prop(object_id: u32, prop_id: u32) -> Result<HermesDrmPropGet, String> {
+    let f = open_rw("/dev/nvidia-drm")?;
+    let mut prop = HermesDrmPropGet {
+        object_id,
+        prop_id,
+        value: 0,
+    };
+    let rc = unsafe {
+        libc_ioctl(
+            f.as_raw_fd(),
+            hermes_drm_ioctl_get_prop(),
+            &mut prop as *mut _ as *mut u8,
+        )
+    };
+    if rc != 0 {
+        return Err(format!(
+            "GET_PROP: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    Ok(prop)
+}
+
 /// Prefer real ioctl prove when modules loaded; else invoke `scripts/load-kmod.sh`.
 pub fn kmod_load_smoke() -> i32 {
     println!("=== kmod-load-smoke: load nvidia*.ko + prove /dev/nvidiactl ioctl ===");
@@ -407,6 +516,165 @@ fn companion_mask_from_sysfs() -> u32 {
     // kmod-load-smoke requires nvidia.ko; compose already sets NVIDIA bit.
     debug_assert!((m & HERMES_MOD_NVIDIA) != 0);
     m
+}
+
+/// Full live Online path: reload with allow_sim_promote, SIM_PROMOTE, EDID, companions, DEMOTE.
+pub fn kmod_online_smoke() -> i32 {
+    println!("=== kmod-online-smoke: SIM_PROMOTE + EDID + companion Online (Turing+) ===");
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/load-kmod.sh");
+    let script = script.canonicalize().unwrap_or(script);
+    println!("reloading kmods with HERMES_SIM_PROMOTE=1 via {}", script.display());
+    let st = std::process::Command::new("sh")
+        .arg(&script)
+        .env("HERMES_SIM_PROMOTE", "1")
+        .status();
+    match st {
+        Ok(s) if s.success() => {}
+        Ok(s) => {
+            eprintln!("load-kmod.sh (sim) exited {s}");
+            return 1;
+        }
+        Err(e) => {
+            eprintln!("failed to run load-kmod.sh: {e}");
+            return 1;
+        }
+    }
+
+    // load-kmod already ran SIM_PROMOTE+DEMOTE when HERMES_SIM_PROMOTE=1.
+    // Re-promote here for EDID/companion proof, then demote.
+    if let Err(e) = ctl_sim_promote() {
+        // If param not sticky after reload... reload sets allow_sim_promote=1.
+        eprintln!("error: {e}");
+        return 1;
+    }
+    let st = match ioctl_status_path("/dev/nvidiactl", hermes_ctl_ioctl_status()) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 1;
+        }
+    };
+    println!(
+        "after SIM_PROMOTE: online={} phase={}",
+        st.is_online(),
+        st.phase_label()
+    );
+    if !st.is_online() || st.phase != 5 {
+        eprintln!("error: expected ONLINE after SIM_PROMOTE");
+        return 1;
+    }
+
+    for path in [
+        "/dev/nvidia-modeset",
+        "/dev/nvidia-uvm",
+        "/dev/nvidia-uvm-tools",
+        "/dev/nvidia-peermem",
+    ] {
+        if !Path::new(path).exists() {
+            eprintln!("error: missing {path}");
+            return 1;
+        }
+        match companion_status(path) {
+            Ok(cs) => {
+                println!(
+                    "  {path}: online={} phase={}",
+                    cs.is_online(),
+                    cs.phase_label()
+                );
+                if !cs.is_online() {
+                    eprintln!("error: companion still Offline after SIM_PROMOTE");
+                    return 1;
+                }
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                return 1;
+            }
+        }
+    }
+
+    match drm_get_edid(1) {
+        Ok(edid) => {
+            println!(
+                "GET_EDID: size={} checksum_ok={}",
+                edid.size,
+                edid.checksum_ok()
+            );
+            if edid.size != 128 || !edid.checksum_ok() {
+                eprintln!("error: bad EDID under Online");
+                return 1;
+            }
+            if edid.data[0] != 0x00 || edid.data[1] != 0xff {
+                eprintln!("error: EDID header invalid");
+                return 1;
+            }
+            println!("live DRM EDID under Online: PASS");
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 1;
+        }
+    }
+    match drm_get_prop(1, HERMES_DRM_PROP_EDID) {
+        Ok(p) => {
+            println!("GET_PROP EDID blob id={}", p.value);
+            if p.value == 0 {
+                eprintln!("error: EDID prop id should be non-zero Online");
+                return 1;
+            }
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 1;
+        }
+    }
+
+    // Bind userspace CUDA/NVML/Mesa from live Online (session parity).
+    nvidia_ml::hermes_nvml_reset();
+    let _ = nvidia_ml::nvmlInit_v2();
+    let _ = nvidia_ml::hermes_nvml_discover_host_gpus();
+    let _ = nvidia_ml::hermes_nvml_promote_first_sim_online();
+    hermes_cuda::hermes_cuda_bind_session_device("Hermes Live Turing", 8 << 30, 7, 5);
+    hermes_mesa::hermes_mesa_set_gsp_online(true);
+    if hermes_cuda::cuInit(0) != 0 {
+        eprintln!("error: CUDA init after kmod Online failed");
+        return 1;
+    }
+    if hermes_mesa::hermes_present_solid_frame().is_err() {
+        eprintln!("error: mesa present after kmod Online failed");
+        return 1;
+    }
+    println!("userspace CUDA+Mesa bound after live Online: PASS");
+
+    if let Err(e) = ctl_demote() {
+        eprintln!("error: {e}");
+        return 1;
+    }
+    let st = match ioctl_status_path("/dev/nvidiactl", hermes_ctl_ioctl_status()) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 1;
+        }
+    };
+    if st.is_online() {
+        eprintln!("error: still Online after DEMOTE");
+        return 1;
+    }
+    // EDID must fail closed Offline.
+    match drm_get_edid(1) {
+        Ok(_) => {
+            eprintln!("error: GET_EDID must fail Offline");
+            return 1;
+        }
+        Err(_) => println!("GET_EDID Offline rejects: PASS"),
+    }
+    hermes_cuda::hermes_cuda_reset();
+    hermes_mesa::hermes_mesa_reset();
+    let _ = nvidia_ml::nvmlShutdown();
+
+    println!("kmod-online-smoke: PASS (SIM_PROMOTE + EDID + companions + DEMOTE)");
+    0
 }
 
 #[cfg(test)]

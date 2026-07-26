@@ -1384,9 +1384,68 @@ pub extern "C" fn nvmlDeviceGetProcessUtilization(
     })
 }
 
+/// P2P capability between two GPUs (0 = not supported / same device).
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetP2PStatus(
+    device1: NvmlDevice_t,
+    device2: NvmlDevice_t,
+    _p2p_index: u32,
+    p2p_status: *mut u32,
+) -> NvmlReturn {
+    if p2p_status.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        let i1 = match handle_to_index(device1) {
+            Some(i) if i < s.gpus.len() => i,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        let i2 = match handle_to_index(device2) {
+            Some(i) if i < s.gpus.len() => i,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        if !s.gpus[i1].manifold.is_online() || !s.gpus[i2].manifold.is_online() {
+            return NVML_ERROR_NOT_SUPPORTED;
+        }
+        // Single-GPU host: self P2P is not meaningful.
+        unsafe {
+            *p2p_status = if i1 == i2 { 0 } else { 1 };
+        }
+        NVML_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetGpuOperationMode(
+    device: NvmlDevice_t,
+    current: *mut u32,
+    pending: *mut u32,
+) -> NvmlReturn {
+    if current.is_null() || pending.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        if handle_to_index(device).map(|i| i < s.gpus.len()) != Some(true) {
+            return NVML_ERROR_INVALID_ARGUMENT;
+        }
+        // 0 = All on (default compute/graphics).
+        unsafe {
+            *current = 0;
+            *pending = 0;
+        }
+        NVML_SUCCESS
+    })
+}
+
 /// Entry-point count for drop-in dashboards.
 pub fn hermes_nvml_entry_count() -> usize {
-    52
+    54
 }
 
 #[no_mangle]
