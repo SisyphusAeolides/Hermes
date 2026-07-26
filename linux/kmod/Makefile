@@ -29,7 +29,11 @@ host-test:
 	$(CC) -std=c11 -Wall -Wextra -O2 -DHERMES_HOST_TEST \
 		-I. -Iinclude \
 		tests/test_drm_host.c hermes_drm_logic.c -o tests/test_drm_host
+	$(CC) -std=c11 -Wall -Wextra -O2 -DHERMES_HOST_TEST \
+		-I. -Iinclude \
+		tests/test_ctl_status_host.c -o tests/test_ctl_status_host
 	./tests/test_bringup_host
 	./tests/test_drm_host
+	./tests/test_ctl_status_host
 
 .PHONY: all clean host-test

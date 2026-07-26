@@ -51,12 +51,15 @@ HERMES_SETTINGS_SIM_ONLINE=1 cargo run -p hermes-settings --bin nvidia-settings 
 Settings discovers the same host GPUs via NVML and prints phase/memory from the
 session (not a fixed empty list).
 
-### Unified stack smoke
+### Unified session promote
 
 ```sh
+cargo run -p hermes-ctl --bin hermes-ctl -- session-promote
 cargo run -p hermes-ctl --bin hermes-ctl -- stack-smoke
+cargo run -p hermes-ctl --bin nvidia-smi -- --hermes-sim-online
 ```
 
-Promotes NVML Online, binds CUDA to the same device name, then runs CUDA/DRM/Mesa/smi smokes.
+`session-promote` discovers host GPUs, runs complete-evidence Online, registers a
+compute process, binds CUDA + Mesa, and leaves process rows visible to smi.
 
 See `docs/DRM_MESA.md` and `docs/CCCL_CUDA.md`.

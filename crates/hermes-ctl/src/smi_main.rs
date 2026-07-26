@@ -8,12 +8,13 @@ use hermes_core::HermesPhase;
 // Crate package hermes-nvml exports library name `nvidia_ml`.
 use nvidia_ml::{
     hermes_nvml_bind_sim_online_session, hermes_nvml_discover_host_gpus,
-    hermes_nvml_format_device_line, hermes_nvml_gpu_count, hermes_nvml_gpu_phase,
-    hermes_nvml_promote_first_sim_online, hermes_nvml_reset, nvmlDeviceGetCount_v2,
-    nvmlDeviceGetCudaComputeCapability, nvmlDeviceGetHandleByIndex_v2, nvmlDeviceGetMemoryInfo,
-    nvmlDeviceGetName, nvmlDeviceGetPCIBusId, nvmlDeviceGetPersistenceMode,
-    nvmlDeviceGetPowerUsage, nvmlDeviceGetTemperature, nvmlDeviceGetUtilizationRates, nvmlInit_v2,
-    nvmlShutdown, nvmlSystemGetCudaDriverVersion_v2, nvmlSystemGetDriverVersion, NvmlMemory_t,
+    hermes_nvml_format_device_line, hermes_nvml_format_process_lines, hermes_nvml_gpu_count,
+    hermes_nvml_gpu_phase, hermes_nvml_promote_first_sim_online, hermes_nvml_register_process,
+    hermes_nvml_reset, nvmlDeviceGetCount_v2, nvmlDeviceGetCudaComputeCapability,
+    nvmlDeviceGetHandleByIndex_v2, nvmlDeviceGetMemoryInfo, nvmlDeviceGetName,
+    nvmlDeviceGetPCIBusId, nvmlDeviceGetPersistenceMode, nvmlDeviceGetPowerUsage,
+    nvmlDeviceGetTemperature, nvmlDeviceGetUtilizationRates, nvmlInit_v2, nvmlShutdown,
+    nvmlSystemGetCudaDriverVersion_v2, nvmlSystemGetDriverVersion, NvmlMemory_t,
     NvmlUtilization_t, NVML_SUCCESS,
 };
 
@@ -48,9 +49,21 @@ fn main() {
     let discovered = hermes_nvml_discover_host_gpus();
     if want_sim_online && hermes_nvml_gpu_count() > 0 {
         let _ = hermes_nvml_promote_first_sim_online();
+        let _ = hermes_nvml_register_process(
+            0,
+            std::process::id(),
+            64 * 1024 * 1024,
+            "nvidia-smi",
+        );
     } else if want_sim_online && hermes_nvml_gpu_count() == 0 {
         // No host GPU: still allow a sim Online bind for CI/smoke.
         hermes_nvml_bind_sim_online_session("Hermes Sim GPU");
+        let _ = hermes_nvml_register_process(
+            0,
+            std::process::id(),
+            64 * 1024 * 1024,
+            "nvidia-smi",
+        );
     }
 
     if args.iter().any(|a| a == "-L" || a == "--list-gpus") {
@@ -209,7 +222,28 @@ fn print_summary_table(discovered: usize) {
         }
     }
     println!("+-------------------------------+----------------------+----------------------+");
-    println!("Processes: Hermes GSP process list not yet implemented");
+    println!();
+    println!("+-----------------------------------------------------------------------------+");
+    println!("| Processes:                                                                  |");
+    println!("|  GPU   GI   CI        PID   Type   Process name                  GPU Memory |");
+    println!("|        ID   ID                                                   Usage      |");
+    println!("|=============================================================================|");
+    let mut any_proc = false;
+    for i in 0..count {
+        let lines = hermes_nvml_format_process_lines(i as usize);
+        for line in lines {
+            // Pad to process table shape.
+            println!(
+                "|    {i}   N/A  N/A  {} |",
+                line.trim_start_matches('|').trim()
+            );
+            any_proc = true;
+        }
+    }
+    if !any_proc {
+        println!("|  No running processes found                                                 |");
+    }
+    println!("+-----------------------------------------------------------------------------+");
 }
 
 fn truncate(s: &str, n: usize) -> String {

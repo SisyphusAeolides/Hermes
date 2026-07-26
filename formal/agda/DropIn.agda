@@ -36,3 +36,7 @@ telemetryLegal (mkSession offline _) = false
 
 sessionSurfaces : Nat
 sessionSurfaces = suc (suc (suc (suc zero)))
+
+processListLegal : SessionPhase -> Bool
+processListLegal online = true
+processListLegal offline = false

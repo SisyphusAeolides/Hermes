@@ -12,6 +12,7 @@
 #include <linux/mutex.h>
 
 #include "include/hermes_kmod.h"
+#include "include/hermes_ctl_uapi.h"
 
 #define HERMES_CHAR_NAME_CTL "nvidiactl"
 #define HERMES_CHAR_NAME_0 "nvidia0"
@@ -20,13 +21,6 @@
 /* IOCtl base for Hermes RM-shaped control (not proprietary numbers). */
 #define HERMES_CTL_IOCTL_BASE 0x48
 #define HERMES_CTL_IOCTL_STATUS _IOR(HERMES_CTL_IOCTL_BASE, 0x10, struct hermes_ctl_status)
-
-struct hermes_ctl_status {
-	__u32 gsp_online;
-	__u32 phase;
-	__u32 version;
-	__u32 pad;
-};
 
 extern bool hermes_gsp_is_online(void);
 extern enum hermes_phase hermes_gsp_phase(void);
@@ -60,10 +54,9 @@ static long hermes_char_ioctl(struct file *file, unsigned int cmd, unsigned long
 		return -ENOTTY;
 
 	mutex_lock(&hermes_char_lock);
-	st.gsp_online = hermes_gsp_is_online() ? 1 : 0;
-	st.phase = (u32)hermes_gsp_phase();
-	st.version = 1;
-	st.pad = 0;
+	/* Primary nvidia.ko is loaded if this code runs; companions optional later. */
+	hermes_ctl_status_fill(&st, hermes_gsp_is_online() ? 1 : 0,
+			       (unsigned)hermes_gsp_phase(), HERMES_MOD_NVIDIA);
 	mutex_unlock(&hermes_char_lock);
 
 	if (copy_to_user((void __user *)arg, &st, sizeof(st)))
@@ -79,8 +72,10 @@ static ssize_t hermes_char_read(struct file *file, char __user *buf, size_t len,
 
 	if (*ppos != 0)
 		return 0;
-	n = scnprintf(line, sizeof(line), "hermes gsp_online=%d phase=%s\n",
-		      hermes_gsp_is_online(), hermes_phase_name(hermes_gsp_phase()));
+	n = scnprintf(line, sizeof(line),
+		      "hermes gsp_online=%d phase=%s modules=nvidia status_ver=%u\n",
+		      hermes_gsp_is_online(), hermes_phase_name(hermes_gsp_phase()),
+		      HERMES_CTL_STATUS_VERSION);
 	if (len < (size_t)n)
 		return -EINVAL;
 	if (copy_to_user(buf, line, n))

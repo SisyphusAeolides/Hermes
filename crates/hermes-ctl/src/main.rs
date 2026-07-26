@@ -107,10 +107,11 @@ fn main() {
             let mode = args.next().unwrap_or_else(|| "host".into());
             smi_smoke(&mode);
         }
+        Some("session-promote") => session_promote_cmd(),
         _ => {
             println!("hermes-ctl — Hermes GSP control\n");
             println!(
-                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online|deep> | drm-smoke <offline|online|dual|gem> | mesa-smoke <offline|online|gem> | stack-smoke | icd-json | silicon-probe [fwroot] | host-bar | mailbox-smoke | silicon-bringup <sim|live-fw|fail-mailbox|host-block> | session-smoke | smi-smoke <host|online>"
+                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online|deep> | drm-smoke <offline|online|dual|gem> | mesa-smoke <offline|online|gem> | stack-smoke | icd-json | silicon-probe [fwroot] | host-bar | mailbox-smoke | silicon-bringup <sim|live-fw|fail-mailbox|host-block> | session-smoke | session-promote | smi-smoke <host|online>"
             );
         }
     }
@@ -946,44 +947,33 @@ fn mesa_smoke(mode: &str) {
 }
 
 fn stack_smoke() {
-    println!("=== stack-smoke: drop-in session + CUDA + DRM + Mesa + smi ===");
-    // Shared session: host NVML discover + complete-evidence Online + CUDA bind.
+    println!("=== stack-smoke: unified session promote + CUDA + DRM + Mesa + smi ===");
     use nvidia_ml::{
-        hermes_nvml_discover_host_gpus, hermes_nvml_format_device_line,
-        hermes_nvml_promote_first_sim_online, hermes_nvml_reset, nvmlInit_v2, nvmlShutdown,
-        NVML_SUCCESS,
+        hermes_nvml_format_device_line, hermes_nvml_process_count, hermes_nvml_session_promote_online,
+        nvmlShutdown,
     };
-    hermes_nvml_reset();
-    assert_eq!(nvmlInit_v2(), NVML_SUCCESS);
-    let n = hermes_nvml_discover_host_gpus();
-    if n > 0 {
-        assert!(hermes_nvml_promote_first_sim_online());
-    } else {
-        nvidia_ml::hermes_nvml_bind_sim_online_session("Hermes Sim GPU");
-    }
-    let line = hermes_nvml_format_device_line(0).expect("nvml device");
-    println!("session nvml: {line}");
-    assert!(line.contains("ONLINE"));
-    // Mirror Online into CUDA with the same device identity string.
-    let name = line
-        .split('(')
-        .next()
-        .unwrap_or("Hermes GSP GPU")
-        .trim()
-        .trim_start_matches("GPU 0:")
-        .trim();
-    hermes_cuda::hermes_cuda_bind_session_device(name, 8 << 30, 7, 5);
+    let snap = hermes_nvml_session_promote_online().expect("session promote");
+    assert!(snap.online);
+    println!(
+        "session nvml: {} {} ONLINE procs={}",
+        snap.name,
+        snap.pci_bus_id,
+        hermes_nvml_process_count(0)
+    );
+    hermes_cuda::hermes_cuda_bind_session_device(
+        &snap.name,
+        snap.total_mem_bytes,
+        snap.compute_major,
+        snap.compute_minor,
+    );
     assert!(hermes_cuda::hermes_cuda_gsp_online());
     assert_eq!(hermes_cuda::cuInit(0), CUDA_SUCCESS);
-    let mut dname = [0u8; 64];
-    assert_eq!(
-        hermes_cuda::cuDeviceGetName(dname.as_mut_ptr(), 64, 0),
-        CUDA_SUCCESS
-    );
-    println!(
-        "session cuda: name={}",
-        String::from_utf8_lossy(&dname[..dname.iter().position(|&b| b == 0).unwrap_or(0)])
-    );
+    hermes_mesa::hermes_mesa_set_gsp_online(true);
+    assert!(hermes_mesa::hermes_mesa_gsp_online());
+    assert!(hermes_mesa::hermes_present_solid_frame().is_ok());
+    let line = hermes_nvml_format_device_line(0).expect("line");
+    assert!(line.contains("ONLINE"));
+    assert!(hermes_nvml_process_count(0) >= 1);
     let _ = nvmlShutdown();
 
     cuda_smoke("deep");
@@ -991,5 +981,46 @@ fn stack_smoke() {
     mesa_smoke("gem");
     smi_smoke("online");
     println!("stack-smoke: PASS (all layers)");
+}
+
+fn session_promote_cmd() {
+    use nvidia_ml::{
+        hermes_nvml_format_process_lines, hermes_nvml_process_count, hermes_nvml_session_promote_online,
+        nvmlShutdown,
+    };
+    let snap = hermes_nvml_session_promote_online().expect("promote");
+    println!(
+        "session-promote: name={} bus={} online={} sm{} mem_mib={}",
+        snap.name,
+        snap.pci_bus_id,
+        snap.online,
+        snap.compute_major,
+        snap.total_mem_bytes / (1024 * 1024)
+    );
+    hermes_cuda::hermes_cuda_bind_session_device(
+        &snap.name,
+        snap.total_mem_bytes,
+        snap.compute_major,
+        snap.compute_minor,
+    );
+    hermes_mesa::hermes_mesa_set_gsp_online(true);
+    println!(
+        "  cuda_online={} mesa_online={} processes={}",
+        hermes_cuda::hermes_cuda_gsp_online(),
+        hermes_mesa::hermes_mesa_gsp_online(),
+        hermes_nvml_process_count(0)
+    );
+    for line in hermes_nvml_format_process_lines(0) {
+        println!("  proc {line}");
+    }
+    if !snap.online
+        || !hermes_cuda::hermes_cuda_gsp_online()
+        || !hermes_mesa::hermes_mesa_gsp_online()
+    {
+        eprintln!("error: session-promote incomplete");
+        std::process::exit(1);
+    }
+    let _ = nvmlShutdown();
+    println!("PASS");
 }
 

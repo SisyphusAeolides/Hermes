@@ -31,3 +31,9 @@ telemetryLegal s = case phase s of
 public export
 sessionSurfaces : Nat
 sessionSurfaces = 4  -- smi, nvml, cuda, settings
+
+||| Process table only legal when session Online.
+public export
+processListLegal : SessionPhase -> Bool
+processListLegal Online = True
+processListLegal Offline = False

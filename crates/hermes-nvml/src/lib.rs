@@ -40,6 +40,29 @@ struct BoundGpu {
     compute_minor: u32,
     power_limit_mw: u32,
     persistence_mode: bool,
+    /// Compute processes bound to this GPU (pid, used memory).
+    processes: Vec<ComputeProcess>,
+}
+
+#[derive(Clone, Debug)]
+struct ComputeProcess {
+    pid: u32,
+    used_gpu_memory: u64,
+    name: String,
+}
+
+/// Snapshot used by CUDA/Mesa/settings session glue.
+#[derive(Clone, Debug)]
+pub struct SessionDeviceSnapshot {
+    pub index: usize,
+    pub name: String,
+    pub pci_bus_id: String,
+    pub uuid: String,
+    pub total_mem_bytes: u64,
+    pub compute_major: u32,
+    pub compute_minor: u32,
+    pub phase: HermesPhase,
+    pub online: bool,
 }
 
 struct NvmlState {
@@ -195,6 +218,7 @@ pub fn hermes_nvml_discover_from_sysfs(sys_pci: &Path) -> usize {
                 compute_minor: min,
                 power_limit_mw: 70_000,
                 persistence_mode: false,
+                processes: Vec::new(),
             });
             added += 1;
         }
@@ -230,6 +254,7 @@ pub fn hermes_nvml_bind_offline_gpu(generation: u32) {
             compute_minor: 5,
             power_limit_mw: 70_000,
             persistence_mode: false,
+            processes: Vec::new(),
         });
     });
 }
@@ -250,6 +275,7 @@ pub fn hermes_nvml_bind_online_gpu(manifold: HermesManifold, name: &str) {
             compute_minor: 5,
             power_limit_mw: 70_000,
             persistence_mode: true,
+            processes: Vec::new(),
         });
     });
 }
@@ -270,6 +296,104 @@ pub fn hermes_nvml_promote_first_sim_online() -> bool {
     match drive_full_success(1, 7, default_negotiated_features()) {
         Ok(m) => hermes_nvml_set_online(0, m),
         Err(_) => false,
+    }
+}
+
+/// Discover host GPUs (or bind sim), promote first with complete-evidence Online.
+/// Returns snapshot of GPU 0 for CUDA/Mesa session glue.
+pub fn hermes_nvml_session_promote_online() -> Option<SessionDeviceSnapshot> {
+    hermes_nvml_reset();
+    let _ = nvmlInit_v2();
+    let n = hermes_nvml_discover_host_gpus();
+    if n == 0 {
+        if !hermes_nvml_bind_sim_online_session("Hermes Sim GPU") {
+            return None;
+        }
+    } else if !hermes_nvml_promote_first_sim_online() {
+        return None;
+    }
+    // Register this process as a compute client when Online.
+    let pid = std::process::id();
+    hermes_nvml_register_process(0, pid, 64 * 1024 * 1024, "hermes-session");
+    hermes_nvml_device_snapshot(0)
+}
+
+pub fn hermes_nvml_device_snapshot(index: usize) -> Option<SessionDeviceSnapshot> {
+    with_state(|s| {
+        let g = s.gpus.get(index)?;
+        Some(SessionDeviceSnapshot {
+            index,
+            name: g.name.clone(),
+            pci_bus_id: g.pci_bus_id.clone(),
+            uuid: g.uuid.clone(),
+            total_mem_bytes: g.total_mem_bytes,
+            compute_major: g.compute_major,
+            compute_minor: g.compute_minor,
+            phase: g.manifold.phase,
+            online: g.manifold.is_online(),
+        })
+    })
+}
+
+/// Register a compute process against a GPU (visible to nvidia-smi process table).
+pub fn hermes_nvml_register_process(
+    gpu_index: usize,
+    pid: u32,
+    used_gpu_memory: u64,
+    name: &str,
+) -> bool {
+    with_state(|s| {
+        let g = match s.gpus.get_mut(gpu_index) {
+            Some(g) => g,
+            None => return false,
+        };
+        if !g.manifold.is_online() {
+            return false;
+        }
+        if let Some(p) = g.processes.iter_mut().find(|p| p.pid == pid) {
+            p.used_gpu_memory = used_gpu_memory;
+            p.name = name.into();
+        } else {
+            g.processes.push(ComputeProcess {
+                pid,
+                used_gpu_memory,
+                name: name.into(),
+            });
+        }
+        true
+    })
+}
+
+pub fn hermes_nvml_process_count(gpu_index: usize) -> usize {
+    with_state(|s| s.gpus.get(gpu_index).map(|g| g.processes.len()).unwrap_or(0))
+}
+
+pub fn hermes_nvml_format_process_lines(gpu_index: usize) -> Vec<String> {
+    with_state(|s| {
+        let g = match s.gpus.get(gpu_index) {
+            Some(g) => g,
+            None => return Vec::new(),
+        };
+        g.processes
+            .iter()
+            .map(|p| {
+                format!(
+                    "|  {:>6}   C   {}  {:>8}MiB |",
+                    p.pid,
+                    truncate_name(&p.name, 20),
+                    p.used_gpu_memory / (1024 * 1024)
+                )
+            })
+            .collect()
+    })
+}
+
+fn truncate_name(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        format!("{s:<n$}")
+    } else {
+        let t: String = s.chars().take(n.saturating_sub(1)).collect();
+        format!("{t}…")
     }
 }
 
@@ -702,6 +826,60 @@ pub extern "C" fn nvmlSystemGetCudaDriverVersion_v2(cuda_driver_version: *mut i3
     NVML_SUCCESS
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct NvmlProcessInfo_t {
+    pub pid: u32,
+    pub used_gpu_memory: u64,
+}
+
+/// nvmlDeviceGetComputeRunningProcesses_v2 — fills process table for Online GPUs.
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetComputeRunningProcesses_v2(
+    device: NvmlDevice_t,
+    info_count: *mut u32,
+    infos: *mut NvmlProcessInfo_t,
+) -> NvmlReturn {
+    if info_count.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        let idx = match handle_to_index(device) {
+            Some(i) if i < s.gpus.len() => i,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        let g = &s.gpus[idx];
+        let n = g.processes.len() as u32;
+        if infos.is_null() {
+            unsafe {
+                *info_count = n;
+            }
+            return NVML_SUCCESS;
+        }
+        let cap = unsafe { *info_count };
+        let write = core::cmp::min(cap, n) as usize;
+        for i in 0..write {
+            unsafe {
+                *infos.add(i) = NvmlProcessInfo_t {
+                    pid: g.processes[i].pid,
+                    used_gpu_memory: g.processes[i].used_gpu_memory,
+                };
+            }
+        }
+        unsafe {
+            *info_count = n;
+        }
+        if cap < n {
+            NVML_ERROR_INSUFFICIENT_SIZE
+        } else {
+            NVML_SUCCESS
+        }
+    })
+}
+
 /// Format a summary line for one device (used by nvidia-smi tests and CLI).
 pub fn hermes_nvml_format_device_line(index: usize) -> Option<String> {
     with_state(|s| {
@@ -818,6 +996,51 @@ mod tests {
         hermes_nvml_bind_offline_gpu(1);
         assert!(hermes_nvml_promote_first_sim_online());
         assert_eq!(hermes_nvml_gpu_phase(0), Some(HermesPhase::Online));
+        hermes_nvml_reset();
+    }
+
+    #[test]
+    fn process_register_only_when_online() {
+        let _g = TEST_LOCK.lock().unwrap();
+        hermes_nvml_reset();
+        hermes_nvml_bind_offline_gpu(1);
+        assert!(!hermes_nvml_register_process(0, 1234, 1024, "x"));
+        assert_eq!(hermes_nvml_process_count(0), 0);
+        assert!(hermes_nvml_promote_first_sim_online());
+        assert!(hermes_nvml_register_process(0, 1234, 128 * 1024 * 1024, "hermes-test"));
+        assert_eq!(hermes_nvml_process_count(0), 1);
+        let mut h = 0u64;
+        assert_eq!(nvmlDeviceGetHandleByIndex_v2(0, &mut h), NVML_SUCCESS);
+        let mut n = 0u32;
+        assert_eq!(
+            nvmlDeviceGetComputeRunningProcesses_v2(h, &mut n, core::ptr::null_mut()),
+            NVML_SUCCESS
+        );
+        assert_eq!(n, 1);
+        let mut infos = [NvmlProcessInfo_t {
+            pid: 0,
+            used_gpu_memory: 0,
+        }; 2];
+        n = 2;
+        assert_eq!(
+            nvmlDeviceGetComputeRunningProcesses_v2(h, &mut n, infos.as_mut_ptr()),
+            NVML_SUCCESS
+        );
+        assert_eq!(n, 1);
+        assert_eq!(infos[0].pid, 1234);
+        let lines = hermes_nvml_format_process_lines(0);
+        assert!(lines[0].contains("1234"));
+        hermes_nvml_reset();
+    }
+
+    #[test]
+    fn session_promote_returns_online_snapshot() {
+        let _g = TEST_LOCK.lock().unwrap();
+        let snap = hermes_nvml_session_promote_online().expect("promote");
+        assert!(snap.online);
+        assert_eq!(snap.phase, HermesPhase::Online);
+        assert!(!snap.name.is_empty());
+        assert!(hermes_nvml_process_count(0) >= 1);
         hermes_nvml_reset();
     }
 
