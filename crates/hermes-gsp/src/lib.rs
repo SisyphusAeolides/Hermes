@@ -14,7 +14,9 @@ pub mod bringup;
 pub mod elf_gsp;
 pub mod firmware;
 pub mod layout;
+pub mod regs;
 pub mod session;
+pub mod wpr;
 
 pub use bootstrap::{
     TuringGspBootstrapMaterial, TuringGspBootstrapRole, VerifiedTuringGspBootstrap,
@@ -37,4 +39,9 @@ pub use layout::{
 pub use session::{
     default_negotiated_features, drive_full_success, plan_activation, ActivationPlan,
     ActivationStep,
+};
+pub use wpr::{
+    TuringFramebufferEvidence, TuringGspDmaInputs, TuringMmuLock, TuringRiscvBootOffsets,
+    TuringSec2BooterLoad, TuringWprPlan, T1000_FRTS_BYTES, T1000_GSP_BOOT_BINARY_BYTES,
+    T1000_WPR_ALIGNMENT, T1000_WPR_HEAP_ALIGNMENT, T1000_WPR_METADATA_BYTES,
 };

@@ -36,12 +36,19 @@ formal/
   idris2/HermesAuthority.idr
   agda/HermesWire.agda
   austral/
-    HermesResources.aui   HermesResources.aum
-    HermesRings.aui       HermesRings.aum
-    HermesFailClosed.aui  HermesFailClosed.aum
+    HermesResources.aui/.aum
+    HermesRings.aui/.aum
+    HermesFailClosed.aui/.aum
+    HermesWpr.aui/.aum
+    HermesBootstrap.aui/.aum
+    HermesFirmware.aui/.aum
+    README.md
   toolchains.lock
   LANGUAGES.md
 ```
+
+**Note:** `tokei` does not recognize `.aui`/`.aum`. Austral is still present;
+use `sh scripts/loc.sh` for a count that includes it.
 
 Austral modules use the interface/body split (`.aui` / `.aum`) required by the
 language. Typecheck with:

@@ -1,0 +1,90 @@
+module body Hermes.Wpr is
+    record FramebufferEvidence: Free is
+        marker: Unit;
+    end;
+
+    record DmaBindings: Free is
+        marker: Unit;
+    end;
+
+    record BootOffsets: Free is
+        marker: Unit;
+    end;
+
+    record WprPlan: Linear is
+        marker: Unit;
+    end;
+
+    record Sec2Mailbox: Linear is
+        marker: Unit;
+    end;
+
+    record Wpr2Active: Free is
+        marker: Unit;
+    end;
+
+    function observeFramebuffer(): FramebufferEvidence is
+        return FramebufferEvidence(marker => nil);
+    end;
+
+    function observeDma(): DmaBindings is
+        return DmaBindings(marker => nil);
+    end;
+
+    function observeBootOffsets(): BootOffsets is
+        return BootOffsets(marker => nil);
+    end;
+
+    function buildPlan(
+        fb: FramebufferEvidence,
+        dma: DmaBindings,
+        boot: BootOffsets
+    ): WprPlan is
+        let { marker: Unit } := fb;
+        let fbUnit: Unit := marker;
+        discardDma(dma);
+        discardBoot(boot);
+        return WprPlan(marker => fbUnit);
+    end;
+
+    function discardDma(dma: DmaBindings): Unit is
+        let { marker: Unit } := dma;
+        return marker;
+    end;
+
+    function discardBoot(boot: BootOffsets): Unit is
+        let { marker: Unit } := boot;
+        return marker;
+    end;
+
+    function discardPlan(plan: WprPlan): Unit is
+        let { marker: Unit } := plan;
+        return marker;
+    end;
+
+    function submitBooterLoad(plan: WprPlan): Sec2Mailbox is
+        let { marker: Unit } := plan;
+        return Sec2Mailbox(marker => marker);
+    end;
+
+    function completeBooter(
+        mailbox: Sec2Mailbox,
+        wpr2: Wpr2Active
+    ): Unit is
+        let { marker: Unit } := mailbox;
+        let mailboxUnit: Unit := marker;
+        let { marker: Unit } := wpr2;
+        let wprUnit: Unit := marker;
+        let discarded: Unit := wprUnit;
+        return mailboxUnit;
+    end;
+
+    function rejectBooter(mailbox: Sec2Mailbox): Unit is
+        let { marker: Unit } := mailbox;
+        return marker;
+    end;
+
+    function observeWpr2Active(): Wpr2Active is
+        return Wpr2Active(marker => nil);
+    end;
+end module body.

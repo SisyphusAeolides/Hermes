@@ -1,0 +1,25 @@
+module Hermes.Firmware is
+    -- Measured GSP-RM admission: family line, digest seal, ELF structure.
+    -- An unsealed image cannot become a FirmwareSeal.
+
+    type RawImage: Free;
+    type Family: Free;
+    type Digest: Free;
+    type ElfStructure: Free;
+    type FirmwareSeal: Linear;
+    type Rejected: Free;
+
+    function openImage(): RawImage;
+    function classifyFamily(image: RawImage): Family;
+    function hashImage(image: RawImage): Digest;
+    function parseElf(image: RawImage): ElfStructure;
+
+    function seal(
+        family: Family,
+        digest: Digest,
+        elf: ElfStructure
+    ): FirmwareSeal;
+
+    function reject(image: RawImage): Rejected;
+    function discardSeal(seal: FirmwareSeal): Unit;
+end module.

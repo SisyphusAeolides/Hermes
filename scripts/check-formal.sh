@@ -49,11 +49,17 @@ if need austral; then
     austral compile --target-type=tc HermesResources.aui,HermesResources.aum
     austral compile --target-type=tc HermesRings.aui,HermesRings.aum
     austral compile --target-type=tc HermesFailClosed.aui,HermesFailClosed.aum
+    austral compile --target-type=tc HermesWpr.aui,HermesWpr.aum
+    austral compile --target-type=tc HermesBootstrap.aui,HermesBootstrap.aum
+    austral compile --target-type=tc HermesFirmware.aui,HermesFirmware.aum
   )
   checked=$((checked + 1))
-  printf 'ok: austral HermesResources HermesRings HermesFailClosed\n'
+  printf 'ok: austral (6 modules)\n'
 else
-  printf 'note: austral not installed; linear resource models present under formal/austral/\n'
+  n=$(find "$ROOT/formal/austral" -name '*.aui' 2>/dev/null | wc -l | tr -d ' ')
+  lines=$(find "$ROOT/formal/austral" -type f \( -name '*.aui' -o -name '*.aum' \) -print0 2>/dev/null | xargs -0 cat 2>/dev/null | wc -l | tr -d ' ')
+  printf 'note: austral not installed; %s modules / %s lines under formal/austral/\n' "$n" "$lines"
+  printf '      (stock tokei ignores .aui/.aum — run scripts/loc.sh)\n'
   printf '      install from https://github.com/austral/austral then re-run with --strict\n'
 fi
 

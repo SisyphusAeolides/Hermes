@@ -21,4 +21,7 @@ austral_modules = [
   "HermesResources",
   "HermesRings",
   "HermesFailClosed",
+  "HermesWpr",
+  "HermesBootstrap",
+  "HermesFirmware",
 ]

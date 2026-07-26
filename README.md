@@ -12,7 +12,7 @@ Languages:
 | Language | Role |
 |---|---|
 | **Rust** | Executable runtime, HAL, Linux drop-in surfaces, tests |
-| **Austral** | Linear ownership of domains, firmware seals, rings, sessions |
+| **Austral** | Linear ownership (`formal/austral/*.aui` + `*.aum` — stock **tokei ignores these**; run `sh scripts/loc.sh`) |
 | **Idris2** | Total phase lattice and online certificates |
 | **Agda** | Feature lattice and ring geometry (`--safe`) |
 
