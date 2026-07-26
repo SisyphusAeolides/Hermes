@@ -36,8 +36,11 @@ if need idris2; then
   if [ -f "$ROOT/formal/idris2/NvkmGsp.idr" ]; then
     (cd "$ROOT/formal/idris2" && idris2 --check NvkmGsp.idr)
   fi
+  if [ -f "$ROOT/formal/idris2/Cccl.idr" ]; then
+    (cd "$ROOT/formal/idris2" && idris2 --check Cccl.idr)
+  fi
   checked=$((checked + 1))
-  printf 'ok: idris2 HermesAuthority (+ NvkmGsp if present)\n'
+  printf 'ok: idris2 formal models\n'
 fi
 
 if need agda; then
@@ -45,8 +48,11 @@ if need agda; then
   if [ -f "$ROOT/formal/agda/NvkmGsp.agda" ]; then
     (cd "$ROOT/formal/agda" && agda NvkmGsp.agda)
   fi
+  if [ -f "$ROOT/formal/agda/Cccl.agda" ]; then
+    (cd "$ROOT/formal/agda" && agda Cccl.agda)
+  fi
   checked=$((checked + 1))
-  printf 'ok: agda HermesWire (+ NvkmGsp if present)\n'
+  printf 'ok: agda formal models\n'
 fi
 
 if need austral; then
@@ -60,6 +66,9 @@ if need austral; then
     austral compile --target-type=tc HermesFirmware.aui,HermesFirmware.aum
     if [ -f NvkmGsp.aui ]; then
       austral compile --target-type=tc NvkmGsp.aui,NvkmGsp.aum
+    fi
+    if [ -f Cccl.aui ]; then
+      austral compile --target-type=tc Cccl.aui,Cccl.aum
     fi
   )
   checked=$((checked + 1))

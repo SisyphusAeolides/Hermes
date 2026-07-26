@@ -21,3 +21,5 @@ hermes-core = { workspace = true }
 hermes-gsp = { workspace = true }
 hermes-linux = { workspace = true }
 hermes-nouveau = { workspace = true }
+hermes-cccl = { workspace = true }
+hermes-cuda = { workspace = true }

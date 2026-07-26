@@ -1,0 +1,22 @@
+[package]
+name = "hermes-cuda"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "CUDA driver/runtime compatibility surface gated on Hermes GSP Online"
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "hermes_cuda"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+hermes-core = { workspace = true }
+hermes-gsp = { workspace = true }
+hermes-cccl = { workspace = true }
+
+[features]
+default = []

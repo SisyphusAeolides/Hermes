@@ -1,0 +1,18 @@
+[package]
+name = "hermes-cccl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "CCCL (Thrust/CUB/libcu++) reverse-engineered catalog and host Thrust subset for Hermes CUDA"
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+hermes-core = { workspace = true }
+
+[features]
+default = []

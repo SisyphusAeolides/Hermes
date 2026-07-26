@@ -9,6 +9,8 @@ members = [
     "crates/hermes-nvml",
     "crates/hermes-ctl",
     "crates/hermes-nouveau",
+    "crates/hermes-cccl",
+    "crates/hermes-cuda",
 ]
 default-members = [
     "crates/hermes-abi",
@@ -19,6 +21,8 @@ default-members = [
     "crates/hermes-nvml",
     "crates/hermes-ctl",
     "crates/hermes-nouveau",
+    "crates/hermes-cccl",
+    "crates/hermes-cuda",
 ]
 
 [workspace.package]
@@ -35,6 +39,8 @@ hermes-core = { path = "crates/hermes-core" }
 hermes-gsp = { path = "crates/hermes-gsp" }
 hermes-linux = { path = "crates/hermes-linux" }
 hermes-nouveau = { path = "crates/hermes-nouveau" }
+hermes-cccl = { path = "crates/hermes-cccl" }
+hermes-cuda = { path = "crates/hermes-cuda" }
 sha2 = { version = "0.10", default-features = false }
 
 [profile.release]

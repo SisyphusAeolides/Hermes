@@ -1,0 +1,23 @@
+module Hermes.Cccl is
+    -- Linear CUDA/CCCL session: device memory and modules are linear.
+
+    type GspOnline: Free;
+    type Driver: Linear;
+    type Context: Linear;
+    type DeviceBuffer: Linear;
+    type HostBuffer: Free;
+    type Module: Linear;
+    type Stream: Linear;
+
+    function requireGsp(): GspOnline;
+    function openDriver(g: GspOnline): Driver;
+    function createContext(d: Driver): Context;
+    function allocDevice(ctx: Context, bytes: Nat64): DeviceBuffer;
+    function freeDevice(buf: DeviceBuffer): Context;
+    function loadModule(ctx: Context): Module;
+    function destroyModule(m: Module): Context;
+    function createStream(ctx: Context): Stream;
+    function destroyStream(s: Stream): Context;
+    function closeContext(ctx: Context): Driver;
+    function closeDriver(d: Driver): Unit;
+end module.

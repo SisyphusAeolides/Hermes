@@ -61,6 +61,13 @@ name = "hermes-abi"
 version = "0.1.0"
 
 [[package]]
+name = "hermes-cccl"
+version = "0.1.0"
+dependencies = [
+ "hermes-core",
+]
+
+[[package]]
 name = "hermes-core"
 version = "0.1.0"
 dependencies = [
@@ -71,10 +78,21 @@ dependencies = [
 name = "hermes-ctl"
 version = "0.1.0"
 dependencies = [
+ "hermes-cccl",
  "hermes-core",
+ "hermes-cuda",
  "hermes-gsp",
  "hermes-linux",
  "hermes-nouveau",
+]
+
+[[package]]
+name = "hermes-cuda"
+version = "0.1.0"
+dependencies = [
+ "hermes-cccl",
+ "hermes-core",
+ "hermes-gsp",
 ]
 
 [[package]]

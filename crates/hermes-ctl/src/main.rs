@@ -18,6 +18,14 @@ use hermes_linux::{
 use hermes_nouveau::{
     comparison_matrix, plan_gsp_load, hermes_exclusive_count, NouveauChip,
 };
+use hermes_cccl::{
+    cub_module_count, thrust_header_count, CCCL_VERSION, HERMES_HOST_IMPLEMENTED,
+    THRUST_PUBLIC_HEADERS, hermes_sort,
+};
+use hermes_cuda::{
+    cuDeviceGetCount, cuInit, hermes_cuda_cccl_version, hermes_cuda_reset,
+    hermes_cuda_set_gsp_online, CUDA_ERROR_HERMES_GSP_OFFLINE, CUDA_SUCCESS,
+};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -45,10 +53,15 @@ fn main() {
             let ver = args.next().unwrap_or_else(|| "570.144".into());
             nouveau_plan(&chip, &ver);
         }
+        Some("cccl") => cccl_status(),
+        Some("cuda-smoke") => {
+            let mode = args.next().unwrap_or_else(|| "offline".into());
+            cuda_smoke(&mode);
+        }
         _ => {
             println!("hermes-ctl — Hermes GSP control\n");
             println!(
-                "commands: status | admit <pci_id> | test-gates | bringup <fail|ok|both> | modules | firmware-pin | firmware-scan [root] | nouveau-compare | nouveau-plan <chip> <ver>"
+                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online>"
             );
         }
     }
@@ -238,6 +251,55 @@ fn nouveau_plan(chip: &str, ver: &str) {
         Err(e) => {
             eprintln!("plan failed: {e:?}");
             std::process::exit(1);
+        }
+    }
+}
+
+fn cccl_status() {
+    println!("CCCL version (catalog): {CCCL_VERSION}");
+    println!("Thrust public headers: {}", thrust_header_count());
+    println!("CUB modules: {}", cub_module_count());
+    println!(
+        "Hermes host Thrust subset: {}",
+        HERMES_HOST_IMPLEMENTED.len()
+    );
+    println!("cuda crate CCCL pin: {}", hermes_cuda_cccl_version());
+    let mut sample: [i32; 5] = [5, 1, 4, 2, 3];
+    hermes_sort(&mut sample);
+    println!("host sort smoke: {:?}", sample);
+    println!(
+        "first thrust headers: {:?}",
+        &THRUST_PUBLIC_HEADERS[..THRUST_PUBLIC_HEADERS.len().min(8)]
+    );
+}
+
+fn cuda_smoke(mode: &str) {
+    hermes_cuda_reset();
+    match mode {
+        "offline" => {
+            let r = cuInit(0);
+            println!("cuInit offline => {r:#x} (expect HERMES_GSP_OFFLINE={CUDA_ERROR_HERMES_GSP_OFFLINE:#x})");
+            if r != CUDA_ERROR_HERMES_GSP_OFFLINE {
+                std::process::exit(1);
+            }
+            println!("PASS");
+        }
+        "online" => {
+            hermes_cuda_set_gsp_online(true);
+            let r = cuInit(0);
+            println!("cuInit online => {r}");
+            if r != CUDA_SUCCESS {
+                std::process::exit(1);
+            }
+            let mut n = 0i32;
+            assert_eq!(cuDeviceGetCount(&mut n), CUDA_SUCCESS);
+            println!("device count: {n}");
+            hermes_cuda_reset();
+            println!("PASS");
+        }
+        other => {
+            eprintln!("use offline|online, got {other}");
+            std::process::exit(2);
         }
     }
 }

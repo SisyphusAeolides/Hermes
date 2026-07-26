@@ -83,6 +83,20 @@ cargo run -p hermes-ctl -- nouveau-plan tu102 570.144
 See [`docs/NOUVEAU_GSP.md`](docs/NOUVEAU_GSP.md). Hermes re-hosts Nouveau GSP
 firmware tables under a **stricter Online** policy (measured digests + manifold).
 
+### CCCL / CUDA compatibility
+
+```sh
+python3 scripts/reverse-engineer-cccl.py --cccl /path/to/cccl --out generated/cccl-re
+cargo test -p hermes-cccl -p hermes-cuda
+cargo run -p hermes-ctl -- cccl
+cargo run -p hermes-ctl -- cuda-smoke offline
+cargo run -p hermes-ctl -- cuda-smoke online
+```
+
+See [`docs/CCCL_CUDA.md`](docs/CCCL_CUDA.md). CCCL (Thrust/CUB/libcu++) is the
+open CUDA **C++ library** layer; `hermes-cuda` is the driver/runtime shell and
+**rejects all device calls while GSP is offline**.
+
 ## Drop-in install (Linux)
 
 After building:
