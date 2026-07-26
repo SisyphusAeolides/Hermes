@@ -1,0 +1,24 @@
+format = 1
+
+# Hermes formal language pins.
+# Rust runtime + host crates live outside this lock.
+# Historical Sisyphus-OS formal set was Idris2 + Agda only; Hermes adds Austral.
+
+idris2_version = "0.8.0"
+idris2_commit = "15a3e4e70843f7a34100f6470c04b791330788df"
+idris2_source_sha256 = "940a283cb66b0097cab0d24fe10341274fab75cb3af58dc715944d6ca7230665"
+
+agda_version = "2.8.0"
+agda_linux_sha256 = "824081b8dcbe431289a50ac6bd83e451f390c51c3884ac7a8c4a5c0df2632faf"
+
+# Austral: linear resource models for GSP domains, rings, and online sessions.
+# Install the austral compiler from https://github.com/austral/austral and pin
+# the exact commit used for `scripts/check-formal.sh --strict`.
+austral_version = "0.1.0"
+austral_repo = "https://github.com/austral/austral"
+austral_commit = "main"
+austral_modules = [
+  "HermesResources",
+  "HermesRings",
+  "HermesFailClosed",
+]

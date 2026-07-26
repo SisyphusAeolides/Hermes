@@ -1,0 +1,14 @@
+/target/
+**/*.rs.bk
+.cargo-cache/
+formal/idris2/build/
+formal/agda/*.agdai
+*.o
+*.so
+*.a
+*.swp
+.DS_Store
+/target-hermes-gsp/
+*.bin
+*.elf
+.env

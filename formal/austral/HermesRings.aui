@@ -1,0 +1,16 @@
+module Hermes.Rings is
+    -- Bounded command/event rings are linear: no double-arm, no silent drop.
+    type CommandRing: Linear;
+    type EventRing: Linear;
+    type ArmedTransport: Linear;
+    type SlotToken: Linear;
+
+    function armCommand(depth: Nat32): CommandRing;
+    function armEvent(depth: Nat32): EventRing;
+
+    function pairRings(command: CommandRing, event: EventRing): ArmedTransport;
+    function disarm(transport: ArmedTransport): Unit;
+
+    function takeSlot(transport: ArmedTransport): SlotToken;
+    function retireSlot(token: SlotToken): ArmedTransport;
+end module.

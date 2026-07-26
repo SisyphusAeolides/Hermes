@@ -1,0 +1,46 @@
+module body Hermes.FailClosed is
+    record Probe: Free is
+        marker: Unit;
+    end;
+
+    record LiveGpu: Linear is
+        marker: Unit;
+    end;
+
+    record Quarantine: Free is
+        marker: Unit;
+    end;
+
+    record Offline: Free is
+        marker: Unit;
+    end;
+
+    function probe(): Probe is
+        return Probe(marker => nil);
+    end;
+
+    function activate(probe: Probe): LiveGpu is
+        let { marker: Unit } := probe;
+        return LiveGpu(marker => marker);
+    end;
+
+    function fault(gpu: LiveGpu): Quarantine is
+        let { marker: Unit } := gpu;
+        return Quarantine(marker => marker);
+    end;
+
+    function recover(q: Quarantine): LiveGpu is
+        let { marker: Unit } := q;
+        return LiveGpu(marker => marker);
+    end;
+
+    function contain(q: Quarantine): Offline is
+        let { marker: Unit } := q;
+        return Offline(marker => marker);
+    end;
+
+    function release(gpu: LiveGpu): Offline is
+        let { marker: Unit } := gpu;
+        return Offline(marker => marker);
+    end;
+end module body.

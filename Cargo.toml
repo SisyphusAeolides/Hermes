@@ -1,0 +1,43 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/hermes-abi",
+    "crates/hermes-core",
+    "crates/hermes-gsp",
+    "crates/hermes-linux",
+    "crates/hermes-settings",
+    "crates/hermes-nvml",
+    "crates/hermes-ctl",
+]
+default-members = [
+    "crates/hermes-abi",
+    "crates/hermes-core",
+    "crates/hermes-gsp",
+    "crates/hermes-linux",
+    "crates/hermes-settings",
+    "crates/hermes-nvml",
+    "crates/hermes-ctl",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.85"
+authors = ["SisyphusAeolides <SisyphusAeolides@pm.me>"]
+repository = "https://github.com/SisyphusAeolides/Hermes"
+
+[workspace.dependencies]
+hermes-abi = { path = "crates/hermes-abi" }
+hermes-core = { path = "crates/hermes-core" }
+hermes-gsp = { path = "crates/hermes-gsp" }
+hermes-linux = { path = "crates/hermes-linux" }
+sha2 = { version = "0.10", default-features = false }
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
