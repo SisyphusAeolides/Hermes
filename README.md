@@ -56,7 +56,18 @@ formal/
 cargo test --workspace
 cargo build --release -p hermes-settings -p hermes-ctl -p hermes-nvml
 sh scripts/check-formal.sh
+# Shared sequencer probe (fail then full Online on SimPlatform)
+cargo run -p hermes-ctl -- bringup both
+# Out-of-tree NVIDIA-named modules
+make -C linux/kmod
 ```
+
+### Linux kernel modules
+
+See [`linux/kmod/README.md`](linux/kmod/README.md). Modules export classic names
+`nvidia`, `nvidia-modeset`, `nvidia-uvm`, `nvidia-drm`, `nvidia-peermem` and call
+the shared fail-closed bring-up (`hermes_run_bringup` / `hermes_gsp::run_bringup`).
+Online is never advertised without firmware + IOMMU + WPR + mailbox + ready.
 
 ## Drop-in install (Linux)
 

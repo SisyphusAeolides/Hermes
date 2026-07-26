@@ -1,0 +1,67 @@
+/* Shared Hermes kmod API — clean-room, fail-closed GSP bring-up. */
+#ifndef HERMES_KMOD_H
+#define HERMES_KMOD_H
+
+#ifdef HERMES_HOST_TEST
+#include <stdbool.h>
+#include <stdint.h>
+typedef uint8_t u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+#else
+#include <linux/types.h>
+#endif
+
+#define HERMES_VENDOR_NVIDIA 0x10deU
+
+enum hermes_phase {
+	HERMES_PHASE_OFFLINE = 0,
+	HERMES_PHASE_PROBED = 1,
+	HERMES_PHASE_FIRMWARED = 2,
+	HERMES_PHASE_QUEUED = 3,
+	HERMES_PHASE_NEGOTIATED = 4,
+	HERMES_PHASE_ONLINE = 5,
+	HERMES_PHASE_RECOVERING = 6,
+	HERMES_PHASE_QUARANTINED = 7,
+};
+
+enum hermes_bringup_status {
+	HERMES_BRINGUP_OK = 0,
+	HERMES_BRINGUP_NOT_NVIDIA = 1,
+	HERMES_BRINGUP_PRE_TURING = 2,
+	HERMES_BRINGUP_NOT_DISPLAY = 3,
+	HERMES_BRINGUP_FIRMWARE = 4,
+	HERMES_BRINGUP_ISOLATION = 5,
+	HERMES_BRINGUP_INCOMPLETE_EVIDENCE = 6,
+	HERMES_BRINGUP_INTERNAL = 7,
+};
+
+struct hermes_pci_id {
+	u16 vendor;
+	u16 device;
+	u8 class_code;
+	u8 subclass;
+};
+
+struct hermes_hw_evidence {
+	bool iommu_isolated;
+	u32 dma_domain;
+	bool wpr_locked;
+	bool mailbox_ok;
+	bool ready_ok;
+	bool firmware_measured;
+};
+
+struct hermes_bringup_result {
+	enum hermes_bringup_status status;
+	enum hermes_phase phase;
+	bool online;
+	u32 domain_id;
+};
+
+bool hermes_is_turing_or_newer(u16 device_id);
+struct hermes_bringup_result hermes_run_bringup(const struct hermes_pci_id *id,
+						const struct hermes_hw_evidence *ev);
+const char *hermes_phase_name(enum hermes_phase phase);
+
+#endif /* HERMES_KMOD_H */

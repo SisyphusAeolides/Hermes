@@ -1,4 +1,15 @@
 /target/
+linux/kmod/*.o
+linux/kmod/*.ko
+linux/kmod/*.mod
+linux/kmod/*.mod.c
+linux/kmod/*.cmd
+linux/kmod/.*.cmd
+linux/kmod/Module.symvers
+linux/kmod/modules.order
+linux/kmod/.tmp_versions/
+linux/kmod/*.o.ur-safe
+
 **/*.rs.bk
 .cargo-cache/
 formal/idris2/build/

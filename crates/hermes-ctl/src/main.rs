@@ -1,15 +1,19 @@
 //! Hermes GSP control and host inspection.
+//! Reports phase from the real shared sequencer (never invents Online).
 
 use hermes_core::{
     HermesManifold, NVIDIA_VENDOR_ID, admit_display_device, is_nvidia_turing_or_newer,
     nvidia_architecture, pci_identity,
 };
 use hermes_gsp::{
-    NVIDIA_GSP_RM_610_43_03, NvidiaGspFirmwareAuthority, default_negotiated_features,
-    drive_full_success, firmware_family_for_device, plan_activation, sha256_bytes,
-    FirmwareFamily, NvidiaGspFirmwareManifest, firmware_version,
+    BringupRequest, FirmwareFamily, HardwareEvidence, NVIDIA_GSP_RM_610_43_03,
+    NvidiaGspFirmwareAuthority, NvidiaGspFirmwareManifest, default_negotiated_features,
+    drive_full_success, firmware_family_for_device, firmware_version, plan_activation,
+    sha256_bytes,
 };
-use hermes_linux::{MODULE_SURFACES, modules};
+use hermes_linux::{
+    MODULE_SURFACES, SimPlatform, linux_bringup, modules, sim_full_hardware,
+};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -20,6 +24,10 @@ fn main() {
             admit_cmd(id);
         }
         Some("test-gates") => test_gates(),
+        Some("bringup") => {
+            let mode = args.next().unwrap_or_else(|| "fail".into());
+            bringup_cmd(&mode);
+        }
         Some("modules") => {
             for s in MODULE_SURFACES {
                 println!("{} -> {}", s.name, s.replaces);
@@ -28,7 +36,9 @@ fn main() {
         Some("firmware-pin") => firmware_pin(),
         _ => {
             println!("hermes-ctl — Hermes GSP control\n");
-            println!("commands: status | admit <pci_id> | test-gates | modules | firmware-pin");
+            println!(
+                "commands: status | admit <pci_id> | test-gates | bringup <fail|ok> | modules | firmware-pin"
+            );
         }
     }
 }
@@ -44,6 +54,7 @@ fn status() {
     println!("Languages: Rust, Austral, Idris2, Agda");
     println!("Primary module: {}", modules::NVIDIA);
     println!("Manifold default: {}", HermesManifold::dark(0).phase.label());
+    println!("Kmod tree: linux/kmod (nvidia, nvidia-modeset, nvidia-uvm, nvidia-drm, nvidia-peermem)");
 }
 
 fn admit_cmd(device_id: u16) {
@@ -65,17 +76,17 @@ fn admit_cmd(device_id: u16) {
 }
 
 fn test_gates() {
-    // Drive the real shipped gate chain.
     let online = drive_full_success(1, 7, default_negotiated_features()).expect("gates");
     assert!(online.is_online());
-    println!("gate-chain: ONLINE generation={} domain={}", online.generation, online.evidence.dma_domain);
+    println!(
+        "gate-chain: ONLINE generation={} domain={}",
+        online.generation, online.evidence.dma_domain
+    );
 
-    // Pre-Turing reject via real admit.
     let volta = pci_identity(NVIDIA_VENDOR_ID, 0x1db6, 0x03, 0x00);
     assert!(admit_display_device(&volta).is_err());
     println!("pre-turing: REJECT 0x1db6");
 
-    // Firmware hash path.
     let payload = b"hermes-ctl-gate-probe";
     let digest = sha256_bytes(payload);
     let manifest = NvidiaGspFirmwareManifest::new(
@@ -88,8 +99,75 @@ fn test_gates() {
     let fw = auth.admit(0x1fb9, payload).expect("fw");
     let arch = nvidia_architecture(0x1fb9).unwrap();
     let plan = plan_activation(arch, &fw);
-    println!("firmware: admitted family={:?} steps={}", plan.firmware_family, plan.steps.len());
+    println!(
+        "firmware: admitted family={:?} steps={}",
+        plan.firmware_family,
+        plan.steps.len()
+    );
     println!("PASS");
+}
+
+/// Drive the shipped linux_bringup + SimPlatform path twice (fail then ok).
+fn bringup_cmd(mode: &str) {
+    let payload = b"hermes-ctl-shared-bringup-image";
+    let digest = sha256_bytes(payload);
+    let manifest = NvidiaGspFirmwareManifest::new(
+        FirmwareFamily::Tu10x,
+        firmware_version(610, 43, 3),
+        payload.len() as u32,
+        digest,
+    );
+    let auth = NvidiaGspFirmwareAuthority::new(core::slice::from_ref(&manifest));
+    let identity = pci_identity(NVIDIA_VENDOR_ID, 0x1fb9, 0x03, 0x00);
+
+    match mode {
+        "fail" | "isolation" => {
+            let plat = SimPlatform::new();
+            plat.set_fail_isolation(true);
+            let mut req = BringupRequest::with_defaults(identity, payload, auth);
+            req.hardware = sim_full_hardware();
+            let report = linux_bringup(&plat, &req);
+            println!(
+                "bringup isolation-fail: online={} phase={} fault={:?} isolate_calls={}",
+                report.is_online(),
+                report.phase().label(),
+                report.fault,
+                plat.isolate_calls()
+            );
+            if report.is_online() {
+                eprintln!("error: isolation failure must not yield Online");
+                std::process::exit(1);
+            }
+            println!("PASS");
+        }
+        "ok" | "success" | "full" => {
+            let plat = SimPlatform::new();
+            let mut req = BringupRequest::with_defaults(identity, payload, auth);
+            req.hardware = HardwareEvidence::full();
+            let report = linux_bringup(&plat, &req);
+            println!(
+                "bringup full: online={} phase={} domain={} map={} dma={}",
+                report.is_online(),
+                report.phase().label(),
+                report.domain_id,
+                plat.map_bar_calls(),
+                plat.dma_alloc_calls()
+            );
+            if !report.is_online() {
+                eprintln!("error: full evidence should Online, fault={:?}", report.fault);
+                std::process::exit(1);
+            }
+            println!("PASS");
+        }
+        "both" => {
+            bringup_cmd("fail");
+            bringup_cmd("ok");
+        }
+        other => {
+            eprintln!("unknown bringup mode: {other} (use fail|ok|both)");
+            std::process::exit(2);
+        }
+    }
 }
 
 fn firmware_pin() {
