@@ -74,6 +74,7 @@ dependencies = [
  "hermes-core",
  "hermes-gsp",
  "hermes-linux",
+ "hermes-nouveau",
 ]
 
 [[package]]
@@ -92,6 +93,16 @@ dependencies = [
  "hermes-abi",
  "hermes-core",
  "hermes-gsp",
+]
+
+[[package]]
+name = "hermes-nouveau"
+version = "0.1.0"
+dependencies = [
+ "hermes-abi",
+ "hermes-core",
+ "hermes-gsp",
+ "hermes-linux",
 ]
 
 [[package]]

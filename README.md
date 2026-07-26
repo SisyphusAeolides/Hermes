@@ -69,6 +69,20 @@ See [`linux/kmod/README.md`](linux/kmod/README.md). Modules export classic names
 the shared fail-closed bring-up (`hermes_run_bringup` / `hermes_gsp::run_bringup`).
 Online is never advertised without firmware + IOMMU + WPR + mailbox + ready.
 
+### Nouveau reverse engineering
+
+```sh
+python3 scripts/reverse-engineer-nouveau.py \
+  --nouveau /path/to/linux/drivers/gpu/drm/nouveau \
+  --out generated/nouveau-re
+cargo test -p hermes-nouveau
+cargo run -p hermes-ctl -- nouveau-compare
+cargo run -p hermes-ctl -- nouveau-plan tu102 570.144
+```
+
+See [`docs/NOUVEAU_GSP.md`](docs/NOUVEAU_GSP.md). Hermes re-hosts Nouveau GSP
+firmware tables under a **stricter Online** policy (measured digests + manifold).
+
 ## Drop-in install (Linux)
 
 After building:

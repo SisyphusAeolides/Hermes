@@ -1,5 +1,6 @@
 /target/
 target/hermes-gsp/
+generated/
 linux/kmod/*.o
 linux/kmod/*.ko
 linux/kmod/*.mod

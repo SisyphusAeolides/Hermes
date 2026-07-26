@@ -15,6 +15,9 @@ use hermes_gsp::{
 use hermes_linux::{
     MODULE_SURFACES, SimPlatform, linux_bringup, modules, sim_full_hardware,
 };
+use hermes_nouveau::{
+    comparison_matrix, plan_gsp_load, hermes_exclusive_count, NouveauChip,
+};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -36,10 +39,16 @@ fn main() {
         }
         Some("firmware-pin") => firmware_pin(),
         Some("firmware-scan") => firmware_scan(args.next().as_deref().unwrap_or("/lib/firmware")),
+        Some("nouveau-compare") => nouveau_compare(),
+        Some("nouveau-plan") => {
+            let chip = args.next().unwrap_or_else(|| "tu102".into());
+            let ver = args.next().unwrap_or_else(|| "570.144".into());
+            nouveau_plan(&chip, &ver);
+        }
         _ => {
             println!("hermes-ctl — Hermes GSP control\n");
             println!(
-                "commands: status | admit <pci_id> | test-gates | bringup <fail|ok|both> | modules | firmware-pin | firmware-scan [root]"
+                "commands: status | admit <pci_id> | test-gates | bringup <fail|ok|both> | modules | firmware-pin | firmware-scan [root] | nouveau-compare | nouveau-plan <chip> <ver>"
             );
         }
     }
@@ -191,6 +200,46 @@ fn firmware_pin() {
         openrm_gsp_relative("610.43.02", FirmwareFamily::Tu10x),
         chip_gsp_relative(NvidiaChipDir::Tu117, "570.144")
     );
+}
+
+fn nouveau_compare() {
+    println!("Hermes exclusive edges: {}", hermes_exclusive_count());
+    println!(
+        "{:<32} {:<8} {:<8} {}",
+        "capability", "nouveau", "hermes", "hermes+"
+    );
+    for e in comparison_matrix() {
+        println!(
+            "{:<32} {:<8} {:<8} {}",
+            format!("{:?}", e.capability),
+            e.nouveau,
+            e.hermes,
+            e.hermes_advantage()
+        );
+    }
+}
+
+fn nouveau_plan(chip: &str, ver: &str) {
+    let c = NouveauChip::from_str_name(chip).unwrap_or(NouveauChip::Tu102);
+    match plan_gsp_load(c, ver) {
+        Ok(plan) => {
+            println!(
+                "chip={} canon={} style={:?} ver={} rm={}",
+                chip,
+                plan.chip.as_str(),
+                plan.style,
+                plan.version,
+                plan.rm_impl
+            );
+            for role in plan.roles {
+                println!("  {}", plan.linux_firmware_path(role));
+            }
+        }
+        Err(e) => {
+            eprintln!("plan failed: {e:?}");
+            std::process::exit(1);
+        }
+    }
 }
 
 fn firmware_scan(root: &str) {

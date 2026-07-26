@@ -1,0 +1,37 @@
+module Hermes.NvkmGsp is
+    -- Linear Nouveau-shaped GSP firmware bundle (clean-room).
+    type Chip: Free;
+    type Version: Free;
+    type BooterLoad: Linear;
+    type BooterUnload: Linear;
+    type Bootloader: Linear;
+    type Fmc: Linear;
+    type GspRm: Linear;
+    type Bundle: Linear;
+    type Online: Linear;
+
+    function chip(): Chip;
+    function version(): Version;
+
+    function loadBooterLoad(): BooterLoad;
+    function loadBooterUnload(): BooterUnload;
+    function loadBootloader(): Bootloader;
+    function loadFmc(): Fmc;
+    function loadGspRm(): GspRm;
+
+    function assembleBooter(
+        load: BooterLoad,
+        unload: BooterUnload,
+        bl: Bootloader,
+        rm: GspRm
+    ): Bundle;
+
+    function assembleFmc(
+        fmc: Fmc,
+        bl: Bootloader,
+        rm: GspRm
+    ): Bundle;
+
+    function hermesIgnite(bundle: Bundle): Online;
+    function releaseOnline(session: Online): Unit;
+end module.

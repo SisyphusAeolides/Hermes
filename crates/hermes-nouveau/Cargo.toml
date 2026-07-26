@@ -1,23 +1,21 @@
 [package]
-name = "hermes-ctl"
+name = "hermes-nouveau"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Hermes GSP control and host prerequisite inspection"
+description = "Clean-room Nouveau NVKM/GSP architecture port for Hermes (MIT Nouveau GSP + Hermes gates)"
 authors.workspace = true
 repository.workspace = true
 
-[[bin]]
-name = "hermes-ctl"
-path = "src/main.rs"
-
-[[bin]]
-name = "nvidia-smi"
-path = "src/smi_main.rs"
+[lib]
+path = "src/lib.rs"
 
 [dependencies]
+hermes-abi = { workspace = true }
 hermes-core = { workspace = true }
 hermes-gsp = { workspace = true }
 hermes-linux = { workspace = true }
-hermes-nouveau = { workspace = true }
+
+[features]
+default = []
