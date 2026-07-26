@@ -1,0 +1,35 @@
+{-# OPTIONS --safe --without-K #-}
+
+module DropIn where
+
+data Nat : Set where
+  zero : Nat
+  suc : Nat -> Nat
+
+data Bool : Set where
+  false : Bool
+  true : Bool
+
+data Surface : Set where
+  nvidiaSmi : Surface
+  nvml : Surface
+  cudaDriver : Surface
+  drmKms : Surface
+
+data SessionPhase : Set where
+  offline : SessionPhase
+  online : SessionPhase
+
+record Session : Set where
+  constructor mkSession
+  field
+    phase : SessionPhase
+    deviceCount : Nat
+
+smiListsDevices : Session -> Bool
+smiListsDevices (mkSession _ zero) = false
+smiListsDevices (mkSession _ (suc _)) = true
+
+telemetryLegal : Session -> Bool
+telemetryLegal (mkSession online _) = true
+telemetryLegal (mkSession offline _) = false

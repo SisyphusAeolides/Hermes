@@ -25,3 +25,4 @@ hermes-cccl = { workspace = true }
 hermes-cuda = { workspace = true }
 hermes-drm = { workspace = true }
 hermes-mesa = { workspace = true }
+hermes-nvml = { path = "../hermes-nvml" }

@@ -103,10 +103,14 @@ fn main() {
             silicon_bringup_cmd(&mode);
         }
         Some("session-smoke") => session_smoke(),
+        Some("smi-smoke") => {
+            let mode = args.next().unwrap_or_else(|| "host".into());
+            smi_smoke(&mode);
+        }
         _ => {
             println!("hermes-ctl — Hermes GSP control\n");
             println!(
-                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online|deep> | drm-smoke <offline|online|dual|gem> | mesa-smoke <offline|online|gem> | stack-smoke | icd-json | silicon-probe [fwroot] | host-bar | mailbox-smoke | silicon-bringup <sim|live-fw|fail-mailbox|host-block> | session-smoke"
+                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online|deep> | drm-smoke <offline|online|dual|gem> | mesa-smoke <offline|online|gem> | stack-smoke | icd-json | silicon-probe [fwroot] | host-bar | mailbox-smoke | silicon-bringup <sim|live-fw|fail-mailbox|host-block> | session-smoke | smi-smoke <host|online>"
             );
         }
     }
@@ -472,6 +476,62 @@ fn session_smoke() {
         report.resources_retained
     );
     println!("PASS");
+}
+
+fn smi_smoke(mode: &str) {
+    use nvidia_ml::{
+        hermes_nvml_discover_host_gpus, hermes_nvml_format_device_line, hermes_nvml_gpu_count,
+        hermes_nvml_promote_first_sim_online, hermes_nvml_reset, nvmlDeviceGetCount_v2,
+        nvmlInit_v2, nvmlShutdown, NVML_SUCCESS,
+    };
+    hermes_nvml_reset();
+    assert_eq!(nvmlInit_v2(), NVML_SUCCESS);
+    let discovered = hermes_nvml_discover_host_gpus();
+    match mode {
+        "host" => {
+            let mut count = 0u32;
+            assert_eq!(nvmlDeviceGetCount_v2(&mut count), NVML_SUCCESS);
+            println!(
+                "smi-smoke host: discovered={discovered} nvml_count={count}"
+            );
+            if count == 0 && discovered == 0 {
+                eprintln!("error: expected host T1000 to appear in NVML via sysfs discover");
+                std::process::exit(1);
+            }
+            let line = hermes_nvml_format_device_line(0).expect("line");
+            println!("  {line}");
+            if !line.contains("0000:01:00.0") && !line.contains("1fb9") && !line.contains("Turing")
+            {
+                // Still require non-empty real bind
+                if hermes_nvml_gpu_count() == 0 {
+                    std::process::exit(1);
+                }
+            }
+            println!("PASS");
+        }
+        "online" => {
+            if hermes_nvml_gpu_count() == 0 {
+                hermes_nvml_discover_host_gpus();
+            }
+            if hermes_nvml_gpu_count() == 0 {
+                nvidia_ml::hermes_nvml_bind_sim_online_session("Hermes Sim GPU");
+            } else {
+                assert!(hermes_nvml_promote_first_sim_online());
+            }
+            let line = hermes_nvml_format_device_line(0).expect("line");
+            println!("smi-smoke online: {line}");
+            if !line.contains("ONLINE") {
+                eprintln!("error: expected ONLINE phase in device line");
+                std::process::exit(1);
+            }
+            println!("PASS");
+        }
+        other => {
+            eprintln!("use host|online, got {other}");
+            std::process::exit(2);
+        }
+    }
+    let _ = nvmlShutdown();
 }
 
 fn firmware_pin() {

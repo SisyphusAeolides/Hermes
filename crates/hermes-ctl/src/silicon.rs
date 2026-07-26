@@ -54,6 +54,7 @@ pub struct SiliconReport {
 
 /// Result of attempting to open PCI BAR0 via sysfs `resource0`.
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct BarMapAttempt {
     pub bdf: String,
     pub path: String,

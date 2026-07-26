@@ -25,5 +25,19 @@ a name does not mark the GPU Online; the manifold gates still apply.
 | Mesa / Vulkan ICD | `hermes-mesa` | `libhermes_mesa.so` ICD name; GSP-gated |
 | CUDA driver API | `hermes-cuda` | `cu*` / `cuda*` shell; GSP-gated |
 | CCCL catalog | `hermes-cccl` | Thrust/CUB inventory + host subset |
+| `nvidia-smi` / NVML | `hermes-ctl` + `hermes-nvml` | Discovers host Turing+ via sysfs; Online telemetry after session promote |
+
+### nvidia-smi
+
+```sh
+cargo run -p hermes-ctl --bin nvidia-smi -- -L
+cargo run -p hermes-ctl --bin nvidia-smi -- --hermes-sim-online
+cargo run -p hermes-ctl --bin hermes-ctl -- smi-smoke host
+cargo run -p hermes-ctl --bin hermes-ctl -- smi-smoke online
+```
+
+Host discover binds Offline NVML slots from PCI. `--hermes-sim-online` promotes
+the first GPU with a complete-evidence Online manifold so power/temp/util query
+paths run through the real NVML ABI.
 
 See `docs/DRM_MESA.md` and `docs/CCCL_CUDA.md`.

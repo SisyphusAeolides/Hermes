@@ -54,6 +54,9 @@ if need idris2; then
   if [ -f "$ROOT/formal/idris2/HostGate.idr" ]; then
     (cd "$ROOT/formal/idris2" && idris2 --check HostGate.idr)
   fi
+  if [ -f "$ROOT/formal/idris2/DropIn.idr" ]; then
+    (cd "$ROOT/formal/idris2" && idris2 --check DropIn.idr)
+  fi
   checked=$((checked + 1))
   printf 'ok: idris2 formal models\n'
 fi
@@ -80,6 +83,9 @@ if need agda; then
   fi
   if [ -f "$ROOT/formal/agda/HostGate.agda" ]; then
     (cd "$ROOT/formal/agda" && agda HostGate.agda)
+  fi
+  if [ -f "$ROOT/formal/agda/DropIn.agda" ]; then
+    (cd "$ROOT/formal/agda" && agda DropIn.agda)
   fi
   checked=$((checked + 1))
   printf 'ok: agda formal models\n'
@@ -108,6 +114,9 @@ if need austral; then
     fi
     if [ -f HostGate.aui ]; then
       austral compile --target-type=tc HostGate.aui,HostGate.aum
+    fi
+    if [ -f DropIn.aui ]; then
+      austral compile --target-type=tc DropIn.aui,DropIn.aum
     fi
   )
   checked=$((checked + 1))

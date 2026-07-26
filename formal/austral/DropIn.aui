@@ -1,0 +1,11 @@
+module Hermes.DropIn is
+    -- Session state feeds proprietary-named surfaces (nvidia-smi / NVML).
+
+    type Session: Free;
+    type SmiView: Free;
+
+    function openOfflineSession(devices: Nat32): Session;
+    function promoteOnline(s: Session): Session;
+    function smiList(s: Session): SmiView;
+    function closeSession(s: Session): Unit;
+end module.

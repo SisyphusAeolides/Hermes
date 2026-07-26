@@ -86,6 +86,7 @@ dependencies = [
  "hermes-linux",
  "hermes-mesa",
  "hermes-nouveau",
+ "hermes-nvml",
 ]
 
 [[package]]
