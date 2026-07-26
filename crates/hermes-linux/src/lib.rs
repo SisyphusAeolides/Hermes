@@ -16,12 +16,13 @@ pub mod ctl_uapi;
 pub mod sim_platform;
 
 pub use ctl_uapi::{
-    hermes_companion_ioctl_status, hermes_ctl_ioctl_demote, hermes_ctl_ioctl_sim_promote,
-    hermes_ctl_ioctl_status, hermes_ctl_module_mask_compose, hermes_drm_ioctl_get_edid,
-    hermes_drm_ioctl_get_prop, hermes_drm_ioctl_status, module_sysfs_path, HermesCtlStatus,
-    HermesDrmEdid, HermesDrmPropGet, HermesDrmStatus, HERMES_CTL_STATUS_VERSION,
-    HERMES_DRM_PROP_EDID, HERMES_MOD_ALL_OPEN_STACK, HERMES_MOD_DRM, HERMES_MOD_MODESET,
-    HERMES_MOD_NVIDIA, HERMES_MOD_PEERMEM, HERMES_MOD_UVM,
+    hermes_companion_ioctl_status, hermes_ctl_ioctl_apply_evidence, hermes_ctl_ioctl_demote,
+    hermes_ctl_ioctl_measure_fw, hermes_ctl_ioctl_sim_promote, hermes_ctl_ioctl_status,
+    hermes_ctl_module_mask_compose, hermes_drm_ioctl_get_edid, hermes_drm_ioctl_get_prop,
+    hermes_drm_ioctl_status, module_sysfs_path, HermesApplyEvidence, HermesCtlStatus,
+    HermesDrmEdid, HermesDrmPropGet, HermesDrmStatus, HermesMeasureFw,
+    HERMES_CTL_STATUS_VERSION, HERMES_DRM_PROP_EDID, HERMES_MOD_ALL_OPEN_STACK,
+    HERMES_MOD_DRM, HERMES_MOD_MODESET, HERMES_MOD_NVIDIA, HERMES_MOD_PEERMEM, HERMES_MOD_UVM,
 };
 
 use hermes_abi::hermes::HermesPciIdentity;

@@ -123,10 +123,13 @@ fn main() {
         Some("kmod-online-smoke") => {
             std::process::exit(chardev::kmod_online_smoke());
         }
+        Some("silicon-fw-smoke") => {
+            std::process::exit(chardev::silicon_fw_smoke());
+        }
         _ => {
             println!("hermes-ctl — Hermes GSP control\n");
             println!(
-                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online|deep> | drm-smoke <offline|online|dual|gem|edid> | mesa-smoke <offline|online|gem> | stack-smoke | icd-json | silicon-probe [fwroot] | host-bar | mailbox-smoke | silicon-bringup <sim|live-fw|fail-mailbox|host-block> | session-smoke | session-promote | smi-smoke <host|online> | chardev-smoke | kmod-status | kmod-load-smoke | kmod-online-smoke | dropin-catalog | dropin-parity | dropin-complete"
+                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online|deep> | drm-smoke <offline|online|dual|gem|edid> | mesa-smoke <offline|online|gem> | stack-smoke | icd-json | silicon-probe [fwroot] | host-bar | mailbox-smoke | silicon-bringup <sim|live-fw|fail-mailbox|host-block> | session-smoke | session-promote | smi-smoke <host|online> | chardev-smoke | kmod-status | kmod-load-smoke | kmod-online-smoke | silicon-fw-smoke | dropin-catalog | dropin-parity | dropin-complete"
             );
         }
     }
@@ -1260,12 +1263,17 @@ fn dropin_complete_cmd() {
             eprintln!("error: kmod-online-smoke failed");
             std::process::exit(1);
         }
+        println!("live kmod — silicon-fw-smoke (measured GSP-RM pin)");
+        if chardev::silicon_fw_smoke() != 0 {
+            eprintln!("error: silicon-fw-smoke failed");
+            std::process::exit(1);
+        }
     } else {
-        println!("live kmod absent — skip kmod-online-smoke (run load-kmod.sh first)");
+        println!("live kmod absent — skip kmod-online/silicon-fw (run load-kmod.sh first)");
     }
 
     println!(
-        "dropin-complete: PASS (catalog + gates + multi-surface + live kmod Online when present)"
+        "dropin-complete: PASS (catalog + gates + multi-surface + live kmod + measured FW)"
     );
 }
 

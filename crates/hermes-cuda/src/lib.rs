@@ -2036,9 +2036,139 @@ pub extern "C" fn cudaRuntimeGetVersion(runtime_version: *mut i32) -> CudaResult
 }
 
 /// Count of driver entry points Hermes currently exports (for drop-in dashboards).
+#[no_mangle]
+pub extern "C" fn cuDeviceGetLuid(
+    luid: *mut u8,
+    device_node_mask: *mut u32,
+    device: i32,
+) -> CudaResult {
+    if luid.is_null() || device_node_mask.is_null() {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    with_state(|s| {
+        if !s.driver_init {
+            return CUDA_ERROR_NOT_INITIALIZED;
+        }
+        if device < 0 || device as usize >= s.devices.len() {
+            return CUDA_ERROR_INVALID_DEVICE;
+        }
+        let mut buf = [0u8; 8];
+        buf[0] = b'H';
+        buf[1] = b'R';
+        buf[7] = device as u8;
+        unsafe {
+            core::ptr::copy_nonoverlapping(buf.as_ptr(), luid, 8);
+            *device_node_mask = 1;
+        }
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuMemAllocManaged(
+    dptr: *mut u64,
+    bytesize: usize,
+    _flags: u32,
+) -> CudaResult {
+    // Managed shell: same as device alloc under Online (software unified).
+    cuMemAlloc_v2(dptr, bytesize)
+}
+
+#[no_mangle]
+pub extern "C" fn cudaMallocManaged(
+    dev_ptr: *mut u64,
+    size: usize,
+    flags: u32,
+) -> CudaResult {
+    cuMemAllocManaged(dev_ptr, size, flags)
+}
+
+/// Address range for a device pointer (software shell: dptr is buffer id).
+#[no_mangle]
+pub extern "C" fn cuMemGetAddressRange_v2(
+    pbase: *mut u64,
+    psize: *mut usize,
+    dptr: u64,
+) -> CudaResult {
+    if pbase.is_null() || psize.is_null() || dptr == 0 {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    with_state(|s| {
+        if !s.driver_init {
+            return CUDA_ERROR_NOT_INITIALIZED;
+        }
+        match s.buffers.iter().find(|b| b.id == dptr) {
+            Some(b) => {
+                unsafe {
+                    *pbase = b.id;
+                    *psize = b.bytes;
+                }
+                CUDA_SUCCESS
+            }
+            None => CUDA_ERROR_INVALID_VALUE,
+        }
+    })
+}
+
+/// Memory advice (software no-op when Online; records success for ABI surface).
+#[no_mangle]
+pub extern "C" fn cuMemAdvise(
+    _dptr: u64,
+    _count: usize,
+    _advice: i32,
+    _device: i32,
+) -> CudaResult {
+    with_state(|s| {
+        if !s.driver_init {
+            return CUDA_ERROR_NOT_INITIALIZED;
+        }
+        if !s.gsp_online {
+            return CUDA_ERROR_HERMES_GSP_OFFLINE;
+        }
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuMemPrefetchAsync(
+    _dptr: u64,
+    _count: usize,
+    _dst_device: i32,
+    _hstream: u64,
+) -> CudaResult {
+    with_state(|s| {
+        if !s.driver_init {
+            return CUDA_ERROR_NOT_INITIALIZED;
+        }
+        if !s.gsp_online {
+            return CUDA_ERROR_HERMES_GSP_OFFLINE;
+        }
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cudaMemAdvise(
+    dev_ptr: u64,
+    count: usize,
+    advice: i32,
+    device: i32,
+) -> CudaResult {
+    cuMemAdvise(dev_ptr, count, advice, device)
+}
+
+#[no_mangle]
+pub extern "C" fn cudaMemPrefetchAsync(
+    dev_ptr: u64,
+    count: usize,
+    dst_device: i32,
+    stream: u64,
+) -> CudaResult {
+    cuMemPrefetchAsync(dev_ptr, count, dst_device, stream)
+}
+
 pub fn hermes_cuda_driver_entry_count() -> usize {
-    // + host alloc, peer, IPC, pointer attrs, uuid
-    69
+    77
 }
 
 pub fn hermes_cuda_host_sort_i32(data: &mut [i32]) {
@@ -2356,6 +2486,40 @@ mod tests {
         let mid = hermes_cuda_module_load_sized(ptx).unwrap();
         assert_ne!(mid, 0);
         assert_eq!(cuModuleUnload(mid), CUDA_SUCCESS);
+        hermes_cuda_reset();
+    }
+
+    #[test]
+    fn managed_luid_range_advise_prefetch() {
+        let _g = TEST_LOCK.lock().unwrap();
+        hermes_cuda_reset();
+        hermes_cuda_set_gsp_online(true);
+        assert_eq!(cuInit(0), CUDA_SUCCESS);
+        let mut ctx = 0u64;
+        assert_eq!(cuCtxCreate_v2(&mut ctx, 0, 0), CUDA_SUCCESS);
+        let mut luid = [0u8; 8];
+        let mut mask = 0u32;
+        assert_eq!(cuDeviceGetLuid(luid.as_mut_ptr(), &mut mask, 0), CUDA_SUCCESS);
+        assert_eq!(luid[0], b'H');
+        assert_eq!(mask, 1);
+        let mut d = 0u64;
+        assert_eq!(cuMemAllocManaged(&mut d, 4096, 0), CUDA_SUCCESS);
+        assert_ne!(d, 0);
+        let mut base = 0u64;
+        let mut size = 0usize;
+        assert_eq!(
+            cuMemGetAddressRange_v2(&mut base, &mut size, d),
+            CUDA_SUCCESS
+        );
+        assert_eq!(base, d);
+        assert_eq!(size, 4096);
+        assert_eq!(cuMemAdvise(d, 4096, 1, 0), CUDA_SUCCESS);
+        assert_eq!(cuMemPrefetchAsync(d, 4096, 0, 0), CUDA_SUCCESS);
+        let mut rd = 0u64;
+        assert_eq!(cudaMallocManaged(&mut rd, 256, 0), CUDA_SUCCESS);
+        assert_eq!(cudaMemAdvise(rd, 256, 1, 0), CUDA_SUCCESS);
+        assert_eq!(cudaMemPrefetchAsync(rd, 256, 0, 0), CUDA_SUCCESS);
+        assert!(hermes_cuda_driver_entry_count() >= 77);
         hermes_cuda_reset();
     }
 

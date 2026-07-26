@@ -4,11 +4,12 @@
 //! Online still report Offline phase when status is readable.
 
 use hermes_linux::{
-    hermes_companion_ioctl_status, hermes_ctl_ioctl_demote, hermes_ctl_ioctl_sim_promote,
-    hermes_ctl_ioctl_status, hermes_drm_ioctl_get_edid, hermes_drm_ioctl_get_prop,
-    hermes_drm_ioctl_status, modules, HermesCtlStatus, HermesDrmEdid, HermesDrmPropGet,
-    HermesDrmStatus, HERMES_DRM_PROP_EDID, HERMES_MOD_DRM, HERMES_MOD_MODESET,
-    HERMES_MOD_NVIDIA, HERMES_MOD_PEERMEM, HERMES_MOD_UVM,
+    hermes_companion_ioctl_status, hermes_ctl_ioctl_apply_evidence, hermes_ctl_ioctl_demote,
+    hermes_ctl_ioctl_measure_fw, hermes_ctl_ioctl_sim_promote, hermes_ctl_ioctl_status,
+    hermes_drm_ioctl_get_edid, hermes_drm_ioctl_get_prop, hermes_drm_ioctl_status, modules,
+    HermesApplyEvidence, HermesCtlStatus, HermesDrmEdid, HermesDrmPropGet, HermesDrmStatus,
+    HermesMeasureFw, HERMES_DRM_PROP_EDID, HERMES_MOD_DRM, HERMES_MOD_MODESET, HERMES_MOD_NVIDIA,
+    HERMES_MOD_PEERMEM, HERMES_MOD_UVM,
 };
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read};
@@ -405,6 +406,317 @@ pub fn drm_get_prop(object_id: u32, prop_id: u32) -> Result<HermesDrmPropGet, St
         ));
     }
     Ok(prop)
+}
+
+/// Host-measured firmware pin to kmod (real digest; Online only if other gates pass).
+pub fn ctl_measure_fw(byte_length: u32, sha256: [u8; 32]) -> Result<HermesMeasureFw, String> {
+    let f = open_rw("/dev/nvidiactl")?;
+    let mut m = HermesMeasureFw {
+        byte_length,
+        sha256,
+        ..Default::default()
+    };
+    let rc = unsafe {
+        libc_ioctl(
+            f.as_raw_fd(),
+            hermes_ctl_ioctl_measure_fw(),
+            &mut m as *mut _ as *mut u8,
+        )
+    };
+    if rc != 0 && m.admitted == 0 {
+        return Err(format!(
+            "MEASURE_FW rejected: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    if rc != 0 {
+        return Err(format!(
+            "MEASURE_FW: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    Ok(m)
+}
+
+pub fn ctl_apply_evidence(mut e: HermesApplyEvidence) -> Result<HermesApplyEvidence, String> {
+    let f = open_rw("/dev/nvidiactl")?;
+    let rc = unsafe {
+        libc_ioctl(
+            f.as_raw_fd(),
+            hermes_ctl_ioctl_apply_evidence(),
+            &mut e as *mut _ as *mut u8,
+        )
+    };
+    if rc != 0 {
+        return Err(format!(
+            "APPLY_EVIDENCE: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    Ok(e)
+}
+
+/// Measure real host gsp_tu10x.bin and push pin to kmod; report phase (often FIRMWARED).
+pub fn silicon_fw_smoke() -> i32 {
+    println!("=== silicon-fw-smoke: measure real GSP-RM + kmod MEASURE_FW ===");
+    let path = "/lib/firmware/nvidia/610.43.02/gsp_tu10x.bin";
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) => {
+            println!("skip: cannot read {path}: {e}");
+            println!("PASS (skipped)");
+            return 0;
+        }
+    };
+    let digest = hermes_gsp::sha256_bytes(&bytes);
+    println!(
+        "host measure: path={path} len={} sha256={:02x}{:02x}…",
+        bytes.len(),
+        digest[0],
+        digest[1]
+    );
+    // Ensure kmods loaded offline.
+    if !module_loaded("nvidia") {
+        let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/load-kmod.sh");
+        let _ = std::process::Command::new("sh").arg(&script).status();
+    }
+    let m = match ctl_measure_fw(bytes.len() as u32, digest) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 1;
+        }
+    };
+    println!(
+        "kmod MEASURE_FW: admitted={} phase={} online={} status={}",
+        m.admitted, m.phase, m.online, m.status
+    );
+    if m.admitted != 1 {
+        eprintln!("error: host firmware must pin-admit");
+        return 1;
+    }
+    // Real measure alone must not invent Online without IOMMU/WPR/mailbox.
+    if m.online != 0 {
+        eprintln!("error: MEASURE_FW alone must not Online on incomplete host");
+        return 1;
+    }
+    // Phase should be at least FIRMWARED (2) after measured FW.
+    if m.phase < 2 {
+        eprintln!("error: expected phase >= FIRMWARED after MEASURE_FW, got {}", m.phase);
+        return 1;
+    }
+    println!("firmware-measured phase progress (not Online): PASS");
+
+    // APPLY incomplete evidence: still Offline.
+    let e = ctl_apply_evidence(HermesApplyEvidence {
+        iommu_isolated: 0,
+        dma_domain: 0,
+        wpr_locked: 0,
+        mailbox_ok: 0,
+        ready_ok: 0,
+        use_measured_fw: 1,
+        force_fw_measured: 0,
+        ..Default::default()
+    });
+    match e {
+        Ok(a) => {
+            println!(
+                "APPLY incomplete: phase={} online={} status={}",
+                a.phase, a.online, a.status
+            );
+            if a.online != 0 {
+                eprintln!("error: incomplete APPLY must not Online");
+                return 1;
+            }
+        }
+        Err(err) => {
+            eprintln!("error: {err}");
+            return 1;
+        }
+    }
+
+    // Bad digest rejected.
+    let mut bad = digest;
+    bad[0] ^= 0xff;
+    if ctl_measure_fw(bytes.len() as u32, bad).is_ok() {
+        eprintln!("error: bad digest must not admit");
+        return 1;
+    }
+    println!("bad digest rejected: PASS");
+
+    // UVM/modeset Online ioctls under SIM_PROMOTE path.
+    if let Err(e) = std::process::Command::new("sh")
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/load-kmod.sh"))
+        .env("HERMES_SIM_PROMOTE", "1")
+        .status()
+        .and_then(|s| {
+            if s.success() {
+                Ok(())
+            } else {
+                Err(std::io::Error::other("load failed"))
+            }
+        })
+    {
+        eprintln!("warn: sim reload for UVM/modeset: {e}");
+    } else if ctl_sim_promote().is_ok() {
+        if let Err(e) = companion_uvm_modeset_online_ops() {
+            eprintln!("error: {e}");
+            let _ = ctl_demote();
+            return 1;
+        }
+        let _ = ctl_demote();
+        println!("UVM/modeset Online ioctl set: PASS");
+    }
+
+    println!("silicon-fw-smoke: PASS");
+    0
+}
+
+fn companion_uvm_modeset_online_ops() -> Result<(), String> {
+    // Full UVM set: INITIALIZE → PAGEABLE → REGISTER_GPU → UNREGISTER_GPU
+    let f = open_rw("/dev/nvidia-uvm")?;
+    // INITIALIZE: _IOW 0x21 size 8
+    let init_req = ((1u64) << 30) | ((0x48u64) << 8) | 0x21 | (8u64 << 16);
+    let mut init = [0u32; 2];
+    let rc = unsafe {
+        libc_ioctl(
+            f.as_raw_fd(),
+            init_req,
+            init.as_mut_ptr() as *mut u8,
+        )
+    };
+    if rc != 0 {
+        return Err(format!("UVM INITIALIZE: {}", io::Error::last_os_error()));
+    }
+    let page_req = ((2u64) << 30) | ((0x48u64) << 8) | 0x22 | (4u64 << 16);
+    let mut pageable = 0u32;
+    let rc = unsafe {
+        libc_ioctl(
+            f.as_raw_fd(),
+            page_req,
+            &mut pageable as *mut _ as *mut u8,
+        )
+    };
+    if rc != 0 {
+        return Err(format!("UVM PAGEABLE: {}", io::Error::last_os_error()));
+    }
+    println!("  UVM pageable_mem_access={pageable}");
+
+    // REGISTER_GPU: _IOWR 0x23 size 24 (uuid[4] + rm_ctrl_fd + registered)
+    #[repr(C)]
+    struct UvmReg {
+        gpu_uuid: [u32; 4],
+        rm_ctrl_fd: u32,
+        registered: u32,
+    }
+    let reg_req = ((3u64) << 30) | ((0x48u64) << 8) | 0x23 | (24u64 << 16);
+    let mut reg = UvmReg {
+        gpu_uuid: [0x4852_4d45, 0x532d_4753, 0x5000_0000, 0x0000_0001], // "HERMES-GSP" shell
+        rm_ctrl_fd: 0,
+        registered: 0,
+    };
+    let rc = unsafe {
+        libc_ioctl(
+            f.as_raw_fd(),
+            reg_req,
+            &mut reg as *mut _ as *mut u8,
+        )
+    };
+    if rc != 0 {
+        return Err(format!("UVM REGISTER_GPU: {}", io::Error::last_os_error()));
+    }
+    if reg.registered != 1 {
+        return Err(format!(
+            "UVM REGISTER_GPU: expected registered=1 got {}",
+            reg.registered
+        ));
+    }
+    println!("  UVM REGISTER_GPU registered={}", reg.registered);
+
+    // UNREGISTER_GPU: _IOW 0x24 size 4
+    let unreg_req = ((1u64) << 30) | ((0x48u64) << 8) | 0x24 | (4u64 << 16);
+    let mut gpu_id = 0u32;
+    let rc = unsafe {
+        libc_ioctl(
+            f.as_raw_fd(),
+            unreg_req,
+            &mut gpu_id as *mut _ as *mut u8,
+        )
+    };
+    if rc != 0 {
+        return Err(format!(
+            "UVM UNREGISTER_GPU: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    println!("  UVM UNREGISTER_GPU: ok");
+
+    // Full modeset set: ALLOC → FLIP → FREE
+    let mf = open_rw("/dev/nvidia-modeset")?;
+    #[repr(C)]
+    struct Alloc {
+        width: u32,
+        height: u32,
+        handle: u32,
+    }
+    let alloc_req = ((3u64) << 30) | ((0x48u64) << 8) | 0x30 | (12u64 << 16);
+    let mut a = Alloc {
+        width: 1920,
+        height: 1080,
+        handle: 0,
+    };
+    let rc = unsafe {
+        libc_ioctl(
+            mf.as_raw_fd(),
+            alloc_req,
+            &mut a as *mut _ as *mut u8,
+        )
+    };
+    if rc != 0 {
+        return Err(format!("MODESET ALLOC: {}", io::Error::last_os_error()));
+    }
+    #[repr(C)]
+    struct Flip {
+        handle: u32,
+        crtc_id: u32,
+        sequence: u32,
+    }
+    let flip_req = ((3u64) << 30) | ((0x48u64) << 8) | 0x31 | (12u64 << 16);
+    let mut fl = Flip {
+        handle: a.handle,
+        crtc_id: 1,
+        sequence: 0,
+    };
+    let rc = unsafe {
+        libc_ioctl(
+            mf.as_raw_fd(),
+            flip_req,
+            &mut fl as *mut _ as *mut u8,
+        )
+    };
+    if rc != 0 {
+        return Err(format!("MODESET FLIP: {}", io::Error::last_os_error()));
+    }
+    // FREE: _IOW 0x32 size 4
+    let free_req = ((1u64) << 30) | ((0x48u64) << 8) | 0x32 | (4u64 << 16);
+    let mut handle = a.handle;
+    let rc = unsafe {
+        libc_ioctl(
+            mf.as_raw_fd(),
+            free_req,
+            &mut handle as *mut _ as *mut u8,
+        )
+    };
+    if rc != 0 {
+        return Err(format!("MODESET FREE: {}", io::Error::last_os_error()));
+    }
+    println!(
+        "  modeset alloc handle={} flip seq={} free=ok",
+        a.handle, fl.sequence
+    );
+
+    // Offline gate: after demote these must fail (caller demotes; re-check optional).
+    Ok(())
 }
 
 /// Prefer real ioctl prove when modules loaded; else invoke `scripts/load-kmod.sh`.

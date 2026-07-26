@@ -90,7 +90,17 @@ ioctls. `module_mask` ORs all live companions. `allow_sim_promote=1` enables
 ```sh
 # Rust end-to-end: SIM_PROMOTE → companion Online → live EDID → DEMOTE
 cargo run -p hermes-ctl --bin hermes-ctl -- kmod-online-smoke
+# Real firmware digest pin into kmod (phase FIRMWARED; Online only if host gates pass)
+cargo run -p hermes-ctl --bin hermes-ctl -- silicon-fw-smoke
 ```
+
+`MEASURE_FW` admits host-measured GSP-RM against the embedded OpenRM pin list
+(610.43.02/03). It advances phase to **FIRMWARED** without inventing Online when
+IOMMU/WPR/mailbox are incomplete (this host’s honest path).
+
+Under integration Online (`SIM_PROMOTE`), companions exercise the full software
+ioctl sets: UVM `INITIALIZE` / `PAGEABLE_MEM_ACCESS` / `REGISTER_GPU` /
+`UNREGISTER_GPU`, modeset `ALLOC` / `FLIP` / `FREE` (all fail-closed Offline).
 
 ### DRM EDID via kmod
 

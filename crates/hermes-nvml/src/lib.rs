@@ -1443,9 +1443,193 @@ pub extern "C" fn nvmlDeviceGetGpuOperationMode(
     })
 }
 
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetCurrentClocksThrottleReasons(
+    device: NvmlDevice_t,
+    clocks_throttle_reasons: *mut u64,
+) -> NvmlReturn {
+    if clocks_throttle_reasons.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        let idx = match handle_to_index(device) {
+            Some(i) if i < s.gpus.len() => i,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        if !s.gpus[idx].manifold.is_online() {
+            return NVML_ERROR_NOT_SUPPORTED;
+        }
+        unsafe {
+            *clocks_throttle_reasons = 0;
+        }
+        NVML_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetPerformanceState(
+    device: NvmlDevice_t,
+    p_state: *mut u32,
+) -> NvmlReturn {
+    if p_state.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        let idx = match handle_to_index(device) {
+            Some(i) if i < s.gpus.len() => i,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        if !s.gpus[idx].manifold.is_online() {
+            return NVML_ERROR_NOT_SUPPORTED;
+        }
+        unsafe {
+            *p_state = 0; // P0 shell
+        }
+        NVML_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetMaxPcieLinkWidth(
+    device: NvmlDevice_t,
+    max_link_width: *mut u32,
+) -> NvmlReturn {
+    if max_link_width.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        let idx = match handle_to_index(device) {
+            Some(i) if i < s.gpus.len() => i,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        if !s.gpus[idx].manifold.is_online() {
+            return NVML_ERROR_NOT_SUPPORTED;
+        }
+        unsafe {
+            *max_link_width = 16;
+        }
+        NVML_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetCurrPcieLinkWidth(
+    device: NvmlDevice_t,
+    curr_link_width: *mut u32,
+) -> NvmlReturn {
+    if curr_link_width.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        let idx = match handle_to_index(device) {
+            Some(i) if i < s.gpus.len() => i,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        if !s.gpus[idx].manifold.is_online() {
+            return NVML_ERROR_NOT_SUPPORTED;
+        }
+        unsafe {
+            *curr_link_width = 16;
+        }
+        NVML_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetPowerManagementLimit(
+    device: NvmlDevice_t,
+    limit: *mut u32,
+) -> NvmlReturn {
+    if limit.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        let idx = match handle_to_index(device) {
+            Some(i) if i < s.gpus.len() => i,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        let g = &s.gpus[idx];
+        if !g.manifold.is_online() {
+            return NVML_ERROR_NOT_SUPPORTED;
+        }
+        unsafe {
+            *limit = g.power_limit_mw;
+        }
+        NVML_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetTotalEnergyConsumption(
+    device: NvmlDevice_t,
+    energy: *mut u64,
+) -> NvmlReturn {
+    if energy.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        let idx = match handle_to_index(device) {
+            Some(i) if i < s.gpus.len() => i,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        if !s.gpus[idx].manifold.is_online() {
+            return NVML_ERROR_NOT_SUPPORTED;
+        }
+        // mJ shell: proportional to power_limit (operator-facing surface only).
+        unsafe {
+            *energy = u64::from(s.gpus[idx].power_limit_mw) * 60;
+        }
+        NVML_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetInforomVersion(
+    device: NvmlDevice_t,
+    object: u32,
+    version: *mut i8,
+    length: u32,
+) -> NvmlReturn {
+    let _ = object;
+    if version.is_null() || length == 0 {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        let idx = match handle_to_index(device) {
+            Some(i) if i < s.gpus.len() => i,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        if !s.gpus[idx].manifold.is_online() {
+            return NVML_ERROR_NOT_SUPPORTED;
+        }
+        copy_cstr(b"Hermes.GSP.1\0", version, length)
+    })
+}
+
 /// Entry-point count for drop-in dashboards.
 pub fn hermes_nvml_entry_count() -> usize {
-    54
+    61
 }
 
 #[no_mangle]
@@ -1645,7 +1829,43 @@ mod tests {
         let mut mode = 0u32;
         assert_eq!(nvmlDeviceGetPersistenceMode(h, &mut mode), NVML_SUCCESS);
         assert_eq!(mode, 1);
-        assert!(hermes_nvml_entry_count() >= 30);
+        let mut reasons = 1u64;
+        assert_eq!(
+            nvmlDeviceGetCurrentClocksThrottleReasons(h, &mut reasons),
+            NVML_SUCCESS
+        );
+        assert_eq!(reasons, 0);
+        let mut pstate = 99u32;
+        assert_eq!(nvmlDeviceGetPerformanceState(h, &mut pstate), NVML_SUCCESS);
+        assert_eq!(pstate, 0);
+        let mut width = 0u32;
+        assert_eq!(
+            nvmlDeviceGetMaxPcieLinkWidth(h, &mut width),
+            NVML_SUCCESS
+        );
+        assert_eq!(width, 16);
+        assert_eq!(
+            nvmlDeviceGetCurrPcieLinkWidth(h, &mut width),
+            NVML_SUCCESS
+        );
+        let mut limit = 0u32;
+        assert_eq!(
+            nvmlDeviceGetPowerManagementLimit(h, &mut limit),
+            NVML_SUCCESS
+        );
+        assert!(limit > 0);
+        let mut energy = 0u64;
+        assert_eq!(
+            nvmlDeviceGetTotalEnergyConsumption(h, &mut energy),
+            NVML_SUCCESS
+        );
+        assert!(energy > 0);
+        let mut ir = [0i8; 32];
+        assert_eq!(
+            nvmlDeviceGetInforomVersion(h, 0, ir.as_mut_ptr(), 32),
+            NVML_SUCCESS
+        );
+        assert!(hermes_nvml_entry_count() >= 61);
         hermes_nvml_reset();
     }
 

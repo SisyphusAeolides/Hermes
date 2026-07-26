@@ -4,7 +4,7 @@
 //! `hermes-ctl` probes nodes with these structures.
 
 /// Matches `HERMES_CTL_STATUS_VERSION` in the kernel uAPI.
-pub const HERMES_CTL_STATUS_VERSION: u32 = 3;
+pub const HERMES_CTL_STATUS_VERSION: u32 = 4;
 
 /// Ioctl type byte (`'H'`).
 pub const HERMES_CTL_IOCTL_BASE: u8 = 0x48;
@@ -12,6 +12,8 @@ pub const HERMES_CTL_IOCTL_BASE: u8 = 0x48;
 pub const HERMES_CTL_IOCTL_STATUS_NR: u8 = 0x10;
 pub const HERMES_CTL_IOCTL_SIM_PROMOTE_NR: u8 = 0x11;
 pub const HERMES_CTL_IOCTL_DEMOTE_NR: u8 = 0x12;
+pub const HERMES_CTL_IOCTL_MEASURE_FW_NR: u8 = 0x13;
+pub const HERMES_CTL_IOCTL_APPLY_EVIDENCE_NR: u8 = 0x14;
 pub const HERMES_COMPANION_IOCTL_STATUS_NR: u8 = 0x20;
 
 pub const HERMES_MOD_NVIDIA: u32 = 1 << 0;
@@ -217,6 +219,67 @@ pub fn hermes_ctl_ioctl_sim_promote() -> u64 {
 
 pub fn hermes_ctl_ioctl_demote() -> u64 {
     ((HERMES_CTL_IOCTL_BASE as u64) << 8) | (HERMES_CTL_IOCTL_DEMOTE_NR as u64)
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct HermesMeasureFw {
+    pub byte_length: u32,
+    pub sha256: [u8; 32],
+    pub admitted: u32,
+    pub phase: u32,
+    pub online: u32,
+    pub status: u32,
+}
+
+impl Default for HermesMeasureFw {
+    fn default() -> Self {
+        Self {
+            byte_length: 0,
+            sha256: [0; 32],
+            admitted: 0,
+            phase: 0,
+            online: 0,
+            status: 0,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HermesApplyEvidence {
+    pub iommu_isolated: u32,
+    pub dma_domain: u32,
+    pub wpr_locked: u32,
+    pub mailbox_ok: u32,
+    pub ready_ok: u32,
+    pub use_measured_fw: u32,
+    pub force_fw_measured: u32,
+    pub phase: u32,
+    pub online: u32,
+    pub status: u32,
+}
+
+/// `_IOWR('H', 0x13, hermes_measure_fw)` — size 4+32+4*4 = 52.
+pub fn hermes_ctl_ioctl_measure_fw() -> u64 {
+    const IOC_READ: u64 = 2;
+    const IOC_WRITE: u64 = 1;
+    const SIZE: u64 = core::mem::size_of::<HermesMeasureFw>() as u64;
+    ((IOC_READ | IOC_WRITE) << 30)
+        | ((HERMES_CTL_IOCTL_BASE as u64) << 8)
+        | (HERMES_CTL_IOCTL_MEASURE_FW_NR as u64)
+        | (SIZE << 16)
+}
+
+/// `_IOWR('H', 0x14, hermes_apply_evidence)` — 10 * u32 = 40.
+pub fn hermes_ctl_ioctl_apply_evidence() -> u64 {
+    const IOC_READ: u64 = 2;
+    const IOC_WRITE: u64 = 1;
+    const SIZE: u64 = core::mem::size_of::<HermesApplyEvidence>() as u64;
+    ((IOC_READ | IOC_WRITE) << 30)
+        | ((HERMES_CTL_IOCTL_BASE as u64) << 8)
+        | (HERMES_CTL_IOCTL_APPLY_EVIDENCE_NR as u64)
+        | (SIZE << 16)
 }
 
 /// Companion STATUS (`_IOR('H', 0x20, hermes_ctl_status)`).

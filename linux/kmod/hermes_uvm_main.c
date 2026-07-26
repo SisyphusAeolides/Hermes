@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 /*
- * Hermes UVM companion — module name nvidia-uvm.
- * /dev/nvidia-uvm + /dev/nvidia-uvm-tools; ops gated on GSP Online.
+ * Hermes UVM companion — nvidia-uvm + nvidia-uvm-tools.
+ * STATUS always; INITIALIZE/REGISTER/PAGEABLE require GSP Online.
  */
 
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/miscdevice.h>
 #include <linux/uaccess.h>
+#include <linux/mutex.h>
 #include <linux/ioctl.h>
 
 #include "include/hermes_kmod.h"
@@ -16,6 +17,11 @@
 
 extern bool hermes_gsp_is_online(void);
 extern enum hermes_phase hermes_gsp_phase(void);
+
+static DEFINE_MUTEX(hermes_uvm_lock);
+static bool hermes_uvm_initialized;
+static bool hermes_uvm_gpu_registered;
+static __u32 hermes_uvm_pageable = 1; /* software capability when Online */
 
 static long hermes_uvm_status_ioctl(struct file *file, unsigned int cmd,
 				    unsigned long arg)
@@ -34,26 +40,83 @@ static long hermes_uvm_status_ioctl(struct file *file, unsigned int cmd,
 
 static long hermes_uvm_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
+	struct hermes_uvm_init init;
+	struct hermes_uvm_register_gpu reg;
+	__u32 pageable;
+	__u32 gpu_id;
+	long err = 0;
+
 	if (cmd == HERMES_UVM_IOCTL_STATUS)
 		return hermes_uvm_status_ioctl(file, cmd, arg);
+
 	if (!hermes_gsp_is_online())
 		return -ENODEV;
-	/* Full UVM ioctl set is future work; Online authorizes the surface. */
-	return -ENOTTY;
+
+	mutex_lock(&hermes_uvm_lock);
+	switch (cmd) {
+	case HERMES_UVM_IOCTL_INITIALIZE:
+		if (copy_from_user(&init, (void __user *)arg, sizeof(init))) {
+			err = -EFAULT;
+			break;
+		}
+		hermes_uvm_initialized = true;
+		pr_info("hermes/nvidia-uvm: INITIALIZE flags=0x%x\n", init.flags);
+		break;
+	case HERMES_UVM_IOCTL_PAGEABLE_MEM_ACCESS:
+		if (!hermes_uvm_initialized) {
+			err = -EINVAL;
+			break;
+		}
+		pageable = hermes_uvm_pageable;
+		if (copy_to_user((void __user *)arg, &pageable, sizeof(pageable)))
+			err = -EFAULT;
+		break;
+	case HERMES_UVM_IOCTL_REGISTER_GPU:
+		if (!hermes_uvm_initialized) {
+			err = -EINVAL;
+			break;
+		}
+		if (copy_from_user(&reg, (void __user *)arg, sizeof(reg))) {
+			err = -EFAULT;
+			break;
+		}
+		hermes_uvm_gpu_registered = true;
+		reg.registered = 1;
+		if (copy_to_user((void __user *)arg, &reg, sizeof(reg)))
+			err = -EFAULT;
+		else
+			pr_info("hermes/nvidia-uvm: REGISTER_GPU ok\n");
+		break;
+	case HERMES_UVM_IOCTL_UNREGISTER_GPU:
+		if (copy_from_user(&gpu_id, (void __user *)arg, sizeof(gpu_id))) {
+			err = -EFAULT;
+			break;
+		}
+		hermes_uvm_gpu_registered = false;
+		(void)gpu_id;
+		break;
+	default:
+		err = -ENOTTY;
+		break;
+	}
+	mutex_unlock(&hermes_uvm_lock);
+	return err;
 }
 
 static ssize_t hermes_uvm_read(struct file *file, char __user *buf, size_t len,
 			       loff_t *ppos)
 {
-	char line[96];
+	char line[128];
 	int n;
 
 	(void)file;
 	if (*ppos != 0)
 		return 0;
 	n = scnprintf(line, sizeof(line),
-		      "hermes/nvidia-uvm gsp_online=%d phase=%s\n",
-		      hermes_gsp_is_online(), hermes_phase_name(hermes_gsp_phase()));
+		      "hermes/nvidia-uvm gsp_online=%d phase=%s init=%d gpu_reg=%d\n",
+		      hermes_gsp_is_online(), hermes_phase_name(hermes_gsp_phase()),
+		      hermes_uvm_initialized ? 1 : 0,
+		      hermes_uvm_gpu_registered ? 1 : 0);
 	if (len < (size_t)n)
 		return -EINVAL;
 	if (copy_to_user(buf, line, n))
@@ -107,12 +170,10 @@ static int __init hermes_uvm_init(void)
 	}
 	err = misc_register(&hermes_uvm_tools_misc);
 	if (err) {
-		pr_err("hermes/nvidia-uvm: tools register failed: %d\n", err);
 		misc_deregister(&hermes_uvm_misc);
 		return err;
 	}
-	pr_info("hermes/nvidia-uvm: /dev/nvidia-uvm + tools ready (gsp_online=%d)\n",
-		hermes_gsp_is_online());
+	pr_info("hermes/nvidia-uvm: ready (gsp_online=%d)\n", hermes_gsp_is_online());
 	return 0;
 }
 
@@ -120,7 +181,6 @@ static void __exit hermes_uvm_exit(void)
 {
 	misc_deregister(&hermes_uvm_tools_misc);
 	misc_deregister(&hermes_uvm_misc);
-	pr_info("hermes/nvidia-uvm: unloaded\n");
 }
 
 module_init(hermes_uvm_init);

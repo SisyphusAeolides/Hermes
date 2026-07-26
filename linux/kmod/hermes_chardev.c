@@ -14,6 +14,7 @@
 #include <linux/namei.h>
 #include <linux/path.h>
 #include <linux/pci.h>
+#include <linux/string.h>
 
 #include "include/hermes_kmod.h"
 #include "include/hermes_ctl_uapi.h"
@@ -31,6 +32,45 @@ static dev_t hermes_char_devt;
 static struct class *hermes_char_class;
 static struct cdev hermes_char_cdev;
 static DEFINE_MUTEX(hermes_char_lock);
+
+/* Sticky evidence from MEASURE_FW / APPLY_EVIDENCE (fail-closed until complete). */
+static bool hermes_fw_admitted;
+static struct hermes_hw_evidence hermes_sticky_ev = {
+	.iommu_isolated = false,
+	.dma_domain = 0,
+	.wpr_locked = false,
+	.mailbox_ok = false,
+	.ready_ok = false,
+	.firmware_measured = false,
+};
+
+/* Embedded OpenRM GSP-RM pins (match hermes-gsp firmware.rs allow-list). */
+static const struct hermes_fw_pin hermes_fw_allow[] = {
+	/* 610.43.02 tu10x */
+	{ .byte_length = 29352832,
+	  .sha256 = { 0xc8, 0xfc, 0x1a, 0x92, 0xc9, 0x0b, 0x03, 0x4b, 0xbb, 0xe4,
+		      0xd5, 0x6c, 0xa9, 0x4b, 0x0d, 0xc9, 0x5a, 0xfb, 0x52, 0xd3,
+		      0x40, 0x9a, 0x78, 0x80, 0x18, 0x6a, 0xe0, 0x3c, 0x7d, 0xde,
+		      0x17, 0xf3 } },
+	/* 610.43.02 ga10x */
+	{ .byte_length = 84277400,
+	  .sha256 = { 0x00, 0xda, 0x3f, 0xd9, 0xb4, 0x1d, 0xb8, 0xaf, 0xd6, 0x61,
+		      0xc9, 0xdc, 0xec, 0x2a, 0x32, 0xa3, 0x1d, 0x3c, 0x14, 0xb9,
+		      0x3e, 0x6d, 0x71, 0x12, 0xd4, 0xfb, 0x3f, 0x46, 0x87, 0x65,
+		      0x25, 0xce } },
+	/* 610.43.03 tu10x */
+	{ .byte_length = 29352832,
+	  .sha256 = { 0x73, 0x06, 0x56, 0x19, 0xdb, 0x9e, 0xc9, 0x21, 0xd1, 0x9f,
+		      0xc4, 0xe5, 0x19, 0xdd, 0x04, 0xd9, 0x1a, 0x91, 0x99, 0xb5,
+		      0x25, 0xea, 0xca, 0x9b, 0x25, 0x7b, 0x89, 0xfb, 0x8c, 0x5e,
+		      0x52, 0xc0 } },
+	/* 610.43.03 ga10x */
+	{ .byte_length = 84277400,
+	  .sha256 = { 0x57, 0x23, 0x73, 0x62, 0x0a, 0x37, 0x41, 0x8f, 0x24, 0xdc,
+		      0x16, 0xb5, 0x03, 0x1c, 0x39, 0x33, 0x87, 0x78, 0xc3, 0x25,
+		      0x7e, 0x48, 0xe8, 0x40, 0x8d, 0xe9, 0xa5, 0x72, 0x91, 0xb2,
+		      0x4f, 0x3a } },
+};
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 2, 0)
 static char *hermes_char_devnode(const struct device *dev, umode_t *mode)
@@ -122,58 +162,139 @@ static int hermes_char_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static int hermes_sim_promote(void)
+static int hermes_pick_turing_display(struct hermes_pci_id *id)
 {
 	struct pci_dev *pdev = NULL;
-	struct hermes_pci_id id;
-	struct hermes_hw_evidence ev = {
-		.iommu_isolated = true,
-		.dma_domain = 1,
-		.wpr_locked = true,
-		.mailbox_ok = true,
-		.ready_ok = true,
-		.firmware_measured = true,
-	};
-	struct hermes_bringup_result r;
-	int found = 0;
-
-	if (!hermes_allow_sim_promote) {
-		pr_info("hermes/nvidia: SIM_PROMOTE denied (allow_sim_promote=0)\n");
-		return -EPERM;
-	}
 
 	while ((pdev = pci_get_device(PCI_VENDOR_ID_NVIDIA, PCI_ANY_ID, pdev)) !=
 	       NULL) {
 		u8 class_code = (pdev->class >> 16) & 0xff;
 
-		if (!hermes_is_turing_or_newer(pdev->device))
+		if (!hermes_is_turing_or_newer(pdev->device) || class_code != 0x03)
 			continue;
-		/* Display controller (VGA/3D) preferred. */
-		if (class_code != 0x03)
-			continue;
-		id.vendor = pdev->vendor;
-		id.device = pdev->device;
-		id.class_code = class_code;
-		id.subclass = (pdev->class >> 8) & 0xff;
-		r = hermes_run_bringup(&id, &ev);
-		hermes_gsp_set_state(r.online, r.phase);
-		found = 1;
-		pr_warn("hermes/nvidia: SIM_PROMOTE device %04x:%04x online=%d phase=%s (not silicon measure)\n",
-			id.vendor, id.device, r.online,
-			hermes_phase_name(r.phase));
+		id->vendor = pdev->vendor;
+		id->device = pdev->device;
+		id->class_code = class_code;
+		id->subclass = (pdev->class >> 8) & 0xff;
 		pci_dev_put(pdev);
-		break;
+		return 0;
 	}
-	if (!found) {
-		pr_info("hermes/nvidia: SIM_PROMOTE: no Turing+ display GPU\n");
-		return -ENODEV;
+	return -ENODEV;
+}
+
+static int hermes_run_sticky_bringup(struct hermes_bringup_result *out)
+{
+	struct hermes_pci_id id;
+	struct hermes_bringup_result r;
+	int err;
+
+	err = hermes_pick_turing_display(&id);
+	if (err)
+		return err;
+	r = hermes_run_bringup(&id, &hermes_sticky_ev);
+	hermes_gsp_set_state(r.online, r.phase);
+	if (out)
+		*out = r;
+	return 0;
+}
+
+static int hermes_sim_promote(void)
+{
+	struct hermes_bringup_result r;
+	int err;
+
+	if (!hermes_allow_sim_promote) {
+		pr_info("hermes/nvidia: SIM_PROMOTE denied (allow_sim_promote=0)\n");
+		return -EPERM;
 	}
+	hermes_sticky_ev.iommu_isolated = true;
+	hermes_sticky_ev.dma_domain = 1;
+	hermes_sticky_ev.wpr_locked = true;
+	hermes_sticky_ev.mailbox_ok = true;
+	hermes_sticky_ev.ready_ok = true;
+	hermes_sticky_ev.firmware_measured = true;
+	hermes_fw_admitted = true;
+	err = hermes_run_sticky_bringup(&r);
+	if (err)
+		return err;
+	pr_warn("hermes/nvidia: SIM_PROMOTE online=%d phase=%s (not silicon measure)\n",
+		r.online, hermes_phase_name(r.phase));
 	return r.online ? 0 : -EIO;
+}
+
+static int hermes_measure_fw(struct hermes_measure_fw *m)
+{
+	struct hermes_bringup_result r;
+	int err;
+
+	if (!m)
+		return -EINVAL;
+	m->admitted = hermes_fw_pin_match(hermes_fw_allow,
+					  ARRAY_SIZE(hermes_fw_allow),
+					  m->byte_length, m->sha256)
+			  ? 1
+			  : 0;
+	if (!m->admitted) {
+		pr_info("hermes/nvidia: MEASURE_FW reject len=%u (not in pin list)\n",
+			m->byte_length);
+		hermes_fw_admitted = false;
+		hermes_sticky_ev.firmware_measured = false;
+		m->phase = hermes_gsp_phase();
+		m->online = hermes_gsp_is_online() ? 1 : 0;
+		m->status = HERMES_BRINGUP_FIRMWARE;
+		return -EINVAL;
+	}
+	hermes_fw_admitted = true;
+	hermes_sticky_ev.firmware_measured = true;
+	err = hermes_run_sticky_bringup(&r);
+	if (err)
+		return err;
+	m->phase = r.phase;
+	m->online = r.online ? 1 : 0;
+	m->status = r.status;
+	pr_info("hermes/nvidia: MEASURE_FW admit len=%u phase=%s online=%d\n",
+		m->byte_length, hermes_phase_name(r.phase), r.online);
+	return 0;
+}
+
+static int hermes_apply_evidence(struct hermes_apply_evidence *e)
+{
+	struct hermes_bringup_result r;
+	int err;
+
+	if (!e)
+		return -EINVAL;
+	if (e->force_fw_measured) {
+		if (!hermes_allow_sim_promote)
+			return -EPERM;
+		hermes_sticky_ev.firmware_measured = true;
+		hermes_fw_admitted = true;
+	} else if (e->use_measured_fw) {
+		if (!hermes_fw_admitted)
+			return -EINVAL;
+		hermes_sticky_ev.firmware_measured = true;
+	}
+	hermes_sticky_ev.iommu_isolated = e->iommu_isolated != 0;
+	hermes_sticky_ev.dma_domain = e->dma_domain;
+	hermes_sticky_ev.wpr_locked = e->wpr_locked != 0;
+	hermes_sticky_ev.mailbox_ok = e->mailbox_ok != 0;
+	hermes_sticky_ev.ready_ok = e->ready_ok != 0;
+	err = hermes_run_sticky_bringup(&r);
+	if (err)
+		return err;
+	e->phase = r.phase;
+	e->online = r.online ? 1 : 0;
+	e->status = r.status;
+	pr_info("hermes/nvidia: APPLY_EVIDENCE phase=%s online=%d status=%d\n",
+		hermes_phase_name(r.phase), r.online, r.status);
+	return 0;
 }
 
 static long hermes_char_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	struct hermes_ctl_status st;
+	struct hermes_measure_fw mfw;
+	struct hermes_apply_evidence aev;
 	unsigned mask;
 	int err = 0;
 
@@ -188,9 +309,31 @@ static long hermes_char_ioctl(struct file *file, unsigned int cmd, unsigned long
 	if (cmd == HERMES_CTL_IOCTL_DEMOTE) {
 		mutex_lock(&hermes_char_lock);
 		hermes_gsp_set_state(false, HERMES_PHASE_OFFLINE);
-		pr_info("hermes/nvidia: DEMOTE → Offline\n");
+		hermes_fw_admitted = false;
+		memset(&hermes_sticky_ev, 0, sizeof(hermes_sticky_ev));
+		pr_info("hermes/nvidia: DEMOTE → Offline (evidence cleared)\n");
 		mutex_unlock(&hermes_char_lock);
 		return 0;
+	}
+	if (cmd == HERMES_CTL_IOCTL_MEASURE_FW) {
+		if (copy_from_user(&mfw, (void __user *)arg, sizeof(mfw)))
+			return -EFAULT;
+		mutex_lock(&hermes_char_lock);
+		err = hermes_measure_fw(&mfw);
+		mutex_unlock(&hermes_char_lock);
+		if (copy_to_user((void __user *)arg, &mfw, sizeof(mfw)))
+			return -EFAULT;
+		return err;
+	}
+	if (cmd == HERMES_CTL_IOCTL_APPLY_EVIDENCE) {
+		if (copy_from_user(&aev, (void __user *)arg, sizeof(aev)))
+			return -EFAULT;
+		mutex_lock(&hermes_char_lock);
+		err = hermes_apply_evidence(&aev);
+		mutex_unlock(&hermes_char_lock);
+		if (copy_to_user((void __user *)arg, &aev, sizeof(aev)))
+			return -EFAULT;
+		return err;
 	}
 	if (cmd != HERMES_CTL_IOCTL_STATUS)
 		return -ENOTTY;
