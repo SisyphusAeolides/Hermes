@@ -44,6 +44,10 @@ struct Context {
     #[allow(dead_code)]
     device: u32,
     live: bool,
+    /// Primary context retained via `cuDevicePrimaryCtxRetain`.
+    primary: bool,
+    /// Reference count for primary contexts only.
+    primary_refs: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -92,6 +96,8 @@ struct CudaState {
     next_handle: u64,
     devices: Vec<Device>,
     contexts: Vec<Context>,
+    /// Stack of current contexts (top = `cuCtxGetCurrent`).
+    current_stack: Vec<u64>,
     buffers: Vec<DeviceBuffer>,
     modules: Vec<Module>,
     functions: Vec<Function>,
@@ -105,6 +111,7 @@ static STATE: Mutex<CudaState> = Mutex::new(CudaState {
     next_handle: 1,
     devices: Vec::new(),
     contexts: Vec::new(),
+    current_stack: Vec::new(),
     buffers: Vec::new(),
     modules: Vec::new(),
     functions: Vec::new(),
@@ -140,6 +147,7 @@ pub fn hermes_cuda_set_gsp_online(online: bool) {
         s.gsp_online = online;
         if !online {
             s.contexts.clear();
+            s.current_stack.clear();
             s.buffers.clear();
             s.modules.clear();
             s.functions.clear();
@@ -196,6 +204,7 @@ pub fn hermes_cuda_reset() {
         s.driver_init = false;
         s.devices.clear();
         s.contexts.clear();
+        s.current_stack.clear();
         s.buffers.clear();
         s.modules.clear();
         s.functions.clear();
@@ -206,12 +215,51 @@ pub fn hermes_cuda_reset() {
 }
 
 fn live_ctx(s: &CudaState) -> Result<u64, CudaResult> {
+    if let Some(&id) = s.current_stack.last() {
+        if s.contexts.iter().any(|c| c.id == id && c.live) {
+            return Ok(id);
+        }
+    }
     s.contexts
         .iter()
         .rev()
         .find(|c| c.live)
         .map(|c| c.id)
         .ok_or(CUDA_ERROR_INVALID_CONTEXT)
+}
+
+fn push_current(s: &mut CudaState, id: u64) {
+    s.current_stack.retain(|&x| x != id);
+    s.current_stack.push(id);
+}
+
+fn destroy_ctx_resources(s: &mut CudaState, ctx: u64) {
+    s.buffers.retain(|b| b.ctx != ctx);
+    let mod_ids: Vec<u64> = s
+        .modules
+        .iter()
+        .filter(|m| m.ctx == ctx)
+        .map(|m| m.id)
+        .collect();
+    s.functions.retain(|f| !mod_ids.contains(&f.module));
+    s.modules.retain(|m| m.ctx != ctx);
+    s.streams.retain(|st| st.ctx != ctx);
+    s.contexts.retain(|c| c.id != ctx);
+    s.current_stack.retain(|&x| x != ctx);
+}
+
+fn device_mem_used(s: &CudaState, device: u32) -> u64 {
+    let ctx_ids: Vec<u64> = s
+        .contexts
+        .iter()
+        .filter(|c| c.device == device && c.live)
+        .map(|c| c.id)
+        .collect();
+    s.buffers
+        .iter()
+        .filter(|b| ctx_ids.contains(&b.ctx))
+        .map(|b| b.bytes as u64)
+        .sum()
 }
 
 // ─── Driver API ───────────────────────────────────────────────────────────
@@ -293,7 +341,10 @@ pub extern "C" fn cuCtxCreate_v2(pctx: *mut u64, _flags: u32, device: i32) -> Cu
             id,
             device: device as u32,
             live: true,
+            primary: false,
+            primary_refs: 0,
         });
+        push_current(s, id);
         unsafe {
             *pctx = id;
         }
@@ -307,27 +358,241 @@ pub extern "C" fn cuCtxDestroy_v2(ctx: u64) -> CudaResult {
         return CUDA_SUCCESS;
     }
     with_state(|s| {
-        s.buffers.retain(|b| b.ctx != ctx);
-        let mod_ids: Vec<u64> = s
-            .modules
+        if let Some(c) = s.contexts.iter().find(|c| c.id == ctx) {
+            if c.primary {
+                // Primary contexts are released via PrimaryCtxRelease.
+                return CUDA_ERROR_INVALID_CONTEXT;
+            }
+        } else {
+            return CUDA_ERROR_INVALID_CONTEXT;
+        }
+        destroy_ctx_resources(s, ctx);
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuCtxGetCurrent(pctx: *mut u64) -> CudaResult {
+    if pctx.is_null() {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    with_state(|s| {
+        let id = s
+            .current_stack
+            .last()
+            .copied()
+            .filter(|&id| s.contexts.iter().any(|c| c.id == id && c.live))
+            .unwrap_or(0);
+        unsafe {
+            *pctx = id;
+        }
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuCtxSetCurrent(ctx: u64) -> CudaResult {
+    with_state(|s| {
+        if ctx == 0 {
+            s.current_stack.clear();
+            return CUDA_SUCCESS;
+        }
+        if !s.contexts.iter().any(|c| c.id == ctx && c.live) {
+            return CUDA_ERROR_INVALID_CONTEXT;
+        }
+        push_current(s, ctx);
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuCtxGetDevice(device: *mut i32) -> CudaResult {
+    if device.is_null() {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    with_state(|s| {
+        let ctx_id = match live_ctx(s) {
+            Ok(c) => c,
+            Err(e) => return e,
+        };
+        let dev = s
+            .contexts
             .iter()
-            .filter(|m| m.ctx == ctx)
-            .map(|m| m.id)
-            .collect();
-        s.functions.retain(|f| !mod_ids.contains(&f.module));
-        s.modules.retain(|m| m.ctx != ctx);
-        s.streams.retain(|st| st.ctx != ctx);
-        s.contexts.retain(|c| c.id != ctx);
+            .find(|c| c.id == ctx_id)
+            .map(|c| c.device as i32)
+            .unwrap_or(0);
+        unsafe {
+            *device = dev;
+        }
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuCtxPushCurrent_v2(ctx: u64) -> CudaResult {
+    if ctx == 0 {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    with_state(|s| {
+        if !s.contexts.iter().any(|c| c.id == ctx && c.live) {
+            return CUDA_ERROR_INVALID_CONTEXT;
+        }
+        s.current_stack.push(ctx);
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuCtxPopCurrent_v2(pctx: *mut u64) -> CudaResult {
+    with_state(|s| {
+        let id = match s.current_stack.pop() {
+            Some(id) => id,
+            None => return CUDA_ERROR_INVALID_CONTEXT,
+        };
+        if !pctx.is_null() {
+            unsafe {
+                *pctx = id;
+            }
+        }
+        CUDA_SUCCESS
+    })
+}
+
+/// Retain the primary context for `device` (creates on first retain).
+#[no_mangle]
+pub extern "C" fn cuDevicePrimaryCtxRetain(pctx: *mut u64, device: i32) -> CudaResult {
+    if pctx.is_null() {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    with_state(|s| {
+        let g = require_gsp(s);
+        if g != CUDA_SUCCESS {
+            return g;
+        }
+        if !s.driver_init {
+            return CUDA_ERROR_NOT_INITIALIZED;
+        }
+        if device < 0 || device as usize >= s.devices.len() {
+            return CUDA_ERROR_INVALID_DEVICE;
+        }
+        let dev = device as u32;
+        let existing = s
+            .contexts
+            .iter()
+            .find(|c| c.device == dev && c.primary && c.live)
+            .map(|c| c.id);
+        if let Some(id) = existing {
+            if let Some(c) = s.contexts.iter_mut().find(|c| c.id == id) {
+                c.primary_refs = c.primary_refs.saturating_add(1);
+            }
+            push_current(s, id);
+            unsafe {
+                *pctx = id;
+            }
+            return CUDA_SUCCESS;
+        }
+        let id = next_id(s);
+        s.contexts.push(Context {
+            id,
+            device: dev,
+            live: true,
+            primary: true,
+            primary_refs: 1,
+        });
+        push_current(s, id);
+        unsafe {
+            *pctx = id;
+        }
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuDevicePrimaryCtxRelease(device: i32) -> CudaResult {
+    with_state(|s| {
+        if device < 0 || device as usize >= s.devices.len() {
+            return CUDA_ERROR_INVALID_DEVICE;
+        }
+        let dev = device as u32;
+        let ctx_id = match s
+            .contexts
+            .iter()
+            .find(|c| c.device == dev && c.primary && c.live)
+            .map(|c| c.id)
+        {
+            Some(id) => id,
+            None => return CUDA_ERROR_INVALID_CONTEXT,
+        };
+        let refs = {
+            let c = s.contexts.iter_mut().find(|c| c.id == ctx_id).unwrap();
+            c.primary_refs = c.primary_refs.saturating_sub(1);
+            c.primary_refs
+        };
+        if refs == 0 {
+            destroy_ctx_resources(s, ctx_id);
+        }
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuDevicePrimaryCtxGetState(
+    device: i32,
+    flags: *mut u32,
+    active: *mut i32,
+) -> CudaResult {
+    if flags.is_null() || active.is_null() {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    with_state(|s| {
+        if !s.driver_init {
+            return CUDA_ERROR_NOT_INITIALIZED;
+        }
+        if device < 0 || device as usize >= s.devices.len() {
+            return CUDA_ERROR_INVALID_DEVICE;
+        }
+        let dev = device as u32;
+        let is_active = s
+            .contexts
+            .iter()
+            .any(|c| c.device == dev && c.primary && c.live && c.primary_refs > 0);
+        unsafe {
+            *flags = 0;
+            *active = if is_active { 1 } else { 0 };
+        }
         CUDA_SUCCESS
     })
 }
 
 /// Device attributes (subset of CUdevice_attribute).
 pub const CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK: i32 = 1;
+pub const CU_DEVICE_ATTRIBUTE_MAX_BLOCK_DIM_X: i32 = 2;
+pub const CU_DEVICE_ATTRIBUTE_MAX_BLOCK_DIM_Y: i32 = 3;
+pub const CU_DEVICE_ATTRIBUTE_MAX_BLOCK_DIM_Z: i32 = 4;
+pub const CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_X: i32 = 5;
+pub const CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_Y: i32 = 6;
+pub const CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_Z: i32 = 7;
+pub const CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK: i32 = 8;
+pub const CU_DEVICE_ATTRIBUTE_TOTAL_CONSTANT_MEMORY: i32 = 9;
 pub const CU_DEVICE_ATTRIBUTE_WARP_SIZE: i32 = 10;
+pub const CU_DEVICE_ATTRIBUTE_MAX_PITCH: i32 = 11;
+pub const CU_DEVICE_ATTRIBUTE_MAX_REGISTERS_PER_BLOCK: i32 = 12;
+pub const CU_DEVICE_ATTRIBUTE_CLOCK_RATE: i32 = 13;
+pub const CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT: i32 = 16;
+pub const CU_DEVICE_ATTRIBUTE_INTEGRATED: i32 = 18;
+pub const CU_DEVICE_ATTRIBUTE_CAN_MAP_HOST_MEMORY: i32 = 19;
+pub const CU_DEVICE_ATTRIBUTE_COMPUTE_MODE: i32 = 20;
+pub const CU_DEVICE_ATTRIBUTE_CONCURRENT_KERNELS: i32 = 31;
+pub const CU_DEVICE_ATTRIBUTE_PCI_BUS_ID: i32 = 33;
+pub const CU_DEVICE_ATTRIBUTE_PCI_DEVICE_ID: i32 = 34;
+pub const CU_DEVICE_ATTRIBUTE_MEMORY_CLOCK_RATE: i32 = 36;
+pub const CU_DEVICE_ATTRIBUTE_GLOBAL_MEMORY_BUS_WIDTH: i32 = 37;
+pub const CU_DEVICE_ATTRIBUTE_L2_CACHE_SIZE: i32 = 38;
+pub const CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_MULTIPROCESSOR: i32 = 39;
+pub const CU_DEVICE_ATTRIBUTE_ASYNC_ENGINE_COUNT: i32 = 40;
+pub const CU_DEVICE_ATTRIBUTE_UNIFIED_ADDRESSING: i32 = 41;
 pub const CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR: i32 = 75;
 pub const CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR: i32 = 76;
-pub const CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT: i32 = 16;
 
 #[no_mangle]
 pub extern "C" fn cuDeviceGetAttribute(
@@ -348,10 +613,33 @@ pub extern "C" fn cuDeviceGetAttribute(
         let dev = &s.devices[device as usize];
         let val = match attrib {
             CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK => 1024,
+            CU_DEVICE_ATTRIBUTE_MAX_BLOCK_DIM_X => 1024,
+            CU_DEVICE_ATTRIBUTE_MAX_BLOCK_DIM_Y => 1024,
+            CU_DEVICE_ATTRIBUTE_MAX_BLOCK_DIM_Z => 64,
+            CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_X => 2_147_483_647,
+            CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_Y => 65535,
+            CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_Z => 65535,
+            CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK => 49152,
+            CU_DEVICE_ATTRIBUTE_TOTAL_CONSTANT_MEMORY => 65536,
             CU_DEVICE_ATTRIBUTE_WARP_SIZE => 32,
+            CU_DEVICE_ATTRIBUTE_MAX_PITCH => 2_147_483_647,
+            CU_DEVICE_ATTRIBUTE_MAX_REGISTERS_PER_BLOCK => 65536,
+            CU_DEVICE_ATTRIBUTE_CLOCK_RATE => 1_395_000, // kHz-class host sim
+            CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT => 40,
+            CU_DEVICE_ATTRIBUTE_INTEGRATED => 0,
+            CU_DEVICE_ATTRIBUTE_CAN_MAP_HOST_MEMORY => 1,
+            CU_DEVICE_ATTRIBUTE_COMPUTE_MODE => 0, // default
+            CU_DEVICE_ATTRIBUTE_CONCURRENT_KERNELS => 1,
+            CU_DEVICE_ATTRIBUTE_PCI_BUS_ID => 3,
+            CU_DEVICE_ATTRIBUTE_PCI_DEVICE_ID => 0,
+            CU_DEVICE_ATTRIBUTE_MEMORY_CLOCK_RATE => 5_001_000,
+            CU_DEVICE_ATTRIBUTE_GLOBAL_MEMORY_BUS_WIDTH => 256,
+            CU_DEVICE_ATTRIBUTE_L2_CACHE_SIZE => 4 * 1024 * 1024,
+            CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_MULTIPROCESSOR => 1024,
+            CU_DEVICE_ATTRIBUTE_ASYNC_ENGINE_COUNT => 3,
+            CU_DEVICE_ATTRIBUTE_UNIFIED_ADDRESSING => 1,
             CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR => dev.compute_major as i32,
             CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR => dev.compute_minor as i32,
-            CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT => 40,
             _ => return CUDA_ERROR_INVALID_VALUE,
         };
         unsafe {
@@ -403,6 +691,38 @@ pub extern "C" fn cuDeviceTotalMem_v2(bytes: *mut u64, device: i32) -> CudaResul
 }
 
 #[no_mangle]
+pub extern "C" fn cuMemGetInfo_v2(free: *mut u64, total: *mut u64) -> CudaResult {
+    if free.is_null() || total.is_null() {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    with_state(|s| {
+        let g = require_gsp(s);
+        if g != CUDA_SUCCESS {
+            return g;
+        }
+        let ctx_id = match live_ctx(s) {
+            Ok(c) => c,
+            Err(e) => return e,
+        };
+        let device = match s.contexts.iter().find(|c| c.id == ctx_id) {
+            Some(c) => c.device,
+            None => return CUDA_ERROR_INVALID_CONTEXT,
+        };
+        if device as usize >= s.devices.len() {
+            return CUDA_ERROR_INVALID_DEVICE;
+        }
+        let tot = s.devices[device as usize].total_mem;
+        let used = device_mem_used(s, device);
+        let free_b = tot.saturating_sub(used);
+        unsafe {
+            *free = free_b;
+            *total = tot;
+        }
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
 pub extern "C" fn cuMemAlloc_v2(dptr: *mut u64, bytesize: usize) -> CudaResult {
     if dptr.is_null() || bytesize == 0 {
         return CUDA_ERROR_INVALID_VALUE;
@@ -412,10 +732,23 @@ pub extern "C" fn cuMemAlloc_v2(dptr: *mut u64, bytesize: usize) -> CudaResult {
         if g != CUDA_SUCCESS {
             return g;
         }
-        let ctx = match s.contexts.iter().rev().find(|c| c.live) {
-            Some(c) => c.id,
-            None => return CUDA_ERROR_INVALID_CONTEXT,
+        let ctx = match live_ctx(s) {
+            Ok(c) => c,
+            Err(e) => return e,
         };
+        let device = s
+            .contexts
+            .iter()
+            .find(|c| c.id == ctx)
+            .map(|c| c.device)
+            .unwrap_or(0);
+        if (device as usize) < s.devices.len() {
+            let tot = s.devices[device as usize].total_mem;
+            let used = device_mem_used(s, device);
+            if used.saturating_add(bytesize as u64) > tot {
+                return CUDA_ERROR_OUT_OF_MEMORY;
+            }
+        }
         let id = next_id(s);
         s.buffers.push(DeviceBuffer {
             id,
@@ -907,9 +1240,59 @@ pub extern "C" fn cudaMemset(dev_ptr: u64, value: i32, count: usize) -> CudaResu
     cuMemsetD8_v2(dev_ptr, value as u8, count)
 }
 
+#[no_mangle]
+pub extern "C" fn cudaMemGetInfo(free: *mut usize, total: *mut usize) -> CudaResult {
+    if free.is_null() || total.is_null() {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    let mut f = 0u64;
+    let mut t = 0u64;
+    let r = cuMemGetInfo_v2(&mut f, &mut t);
+    if r == CUDA_SUCCESS {
+        unsafe {
+            *free = f as usize;
+            *total = t as usize;
+        }
+    }
+    r
+}
+
+#[no_mangle]
+pub extern "C" fn cudaGetDevice(device: *mut i32) -> CudaResult {
+    cuCtxGetDevice(device)
+}
+
+#[no_mangle]
+pub extern "C" fn cudaSetDevice(device: i32) -> CudaResult {
+    let mut ctx = 0u64;
+    let r = cuDevicePrimaryCtxRetain(&mut ctx, device);
+    if r != CUDA_SUCCESS {
+        return r;
+    }
+    // Primary retain already pushed current; release extra ref if set device only
+    // reuses retain semantics — keep one ref for the primary as "set".
+    CUDA_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn cudaDeviceSynchronize() -> CudaResult {
+    with_state(|s| {
+        let g = require_gsp(s);
+        if g != CUDA_SUCCESS {
+            return g;
+        }
+        if live_ctx(s).is_err() {
+            return CUDA_ERROR_INVALID_CONTEXT;
+        }
+        CUDA_SUCCESS
+    })
+}
+
 /// Count of driver entry points Hermes currently exports (for drop-in dashboards).
 pub fn hermes_cuda_driver_entry_count() -> usize {
-    28
+    // cuInit, device*, ctx*, primary*, mem*, memcpy*, memset, module*, launch,
+    // stream*, event*, runtime aliases
+    42
 }
 
 pub fn hermes_cuda_host_sort_i32(data: &mut [i32]) {
@@ -1083,5 +1466,104 @@ mod tests {
             ModuleImageKind::CubinElf
         );
         assert_eq!(classify_module_image(b"garbage!!"), ModuleImageKind::Unknown);
+    }
+
+    #[test]
+    fn primary_context_retain_release_and_memgetinfo() {
+        let _g = TEST_LOCK.lock().unwrap();
+        hermes_cuda_reset();
+        hermes_cuda_set_gsp_online(true);
+        assert_eq!(cuInit(0), CUDA_SUCCESS);
+
+        let mut flags = 1u32;
+        let mut active = 1i32;
+        assert_eq!(
+            cuDevicePrimaryCtxGetState(0, &mut flags, &mut active),
+            CUDA_SUCCESS
+        );
+        assert_eq!(active, 0);
+
+        let mut ctx = 0u64;
+        assert_eq!(cuDevicePrimaryCtxRetain(&mut ctx, 0), CUDA_SUCCESS);
+        assert_ne!(ctx, 0);
+        assert_eq!(
+            cuDevicePrimaryCtxGetState(0, &mut flags, &mut active),
+            CUDA_SUCCESS
+        );
+        assert_eq!(active, 1);
+
+        let mut cur = 0u64;
+        assert_eq!(cuCtxGetCurrent(&mut cur), CUDA_SUCCESS);
+        assert_eq!(cur, ctx);
+
+        let mut free = 0u64;
+        let mut total = 0u64;
+        assert_eq!(cuMemGetInfo_v2(&mut free, &mut total), CUDA_SUCCESS);
+        assert_eq!(total, 8 * 1024 * 1024 * 1024);
+        assert_eq!(free, total);
+
+        let mut dptr = 0u64;
+        assert_eq!(cuMemAlloc_v2(&mut dptr, 1024), CUDA_SUCCESS);
+        assert_eq!(cuMemGetInfo_v2(&mut free, &mut total), CUDA_SUCCESS);
+        assert_eq!(free, total - 1024);
+
+        let mut dev = -1i32;
+        assert_eq!(cuCtxGetDevice(&mut dev), CUDA_SUCCESS);
+        assert_eq!(dev, 0);
+
+        let mut attr = 0i32;
+        assert_eq!(
+            cuDeviceGetAttribute(&mut attr, CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_X, 0),
+            CUDA_SUCCESS
+        );
+        assert!(attr > 0);
+
+        assert_eq!(cuMemFree_v2(dptr), CUDA_SUCCESS);
+        assert_eq!(cuDevicePrimaryCtxRelease(0), CUDA_SUCCESS);
+        assert_eq!(
+            cuDevicePrimaryCtxGetState(0, &mut flags, &mut active),
+            CUDA_SUCCESS
+        );
+        assert_eq!(active, 0);
+        assert!(hermes_cuda_driver_entry_count() >= 40);
+        hermes_cuda_reset();
+    }
+
+    #[test]
+    fn ctx_push_pop_and_set_current() {
+        let _g = TEST_LOCK.lock().unwrap();
+        hermes_cuda_reset();
+        hermes_cuda_set_gsp_online(true);
+        assert_eq!(cuInit(0), CUDA_SUCCESS);
+        let mut a = 0u64;
+        let mut b = 0u64;
+        assert_eq!(cuCtxCreate_v2(&mut a, 0, 0), CUDA_SUCCESS);
+        assert_eq!(cuCtxCreate_v2(&mut b, 0, 0), CUDA_SUCCESS);
+        assert_eq!(cuCtxSetCurrent(a), CUDA_SUCCESS);
+        let mut cur = 0u64;
+        assert_eq!(cuCtxGetCurrent(&mut cur), CUDA_SUCCESS);
+        assert_eq!(cur, a);
+        assert_eq!(cuCtxPushCurrent_v2(b), CUDA_SUCCESS);
+        assert_eq!(cuCtxGetCurrent(&mut cur), CUDA_SUCCESS);
+        assert_eq!(cur, b);
+        let mut popped = 0u64;
+        assert_eq!(cuCtxPopCurrent_v2(&mut popped), CUDA_SUCCESS);
+        assert_eq!(popped, b);
+        assert_eq!(cuCtxGetCurrent(&mut cur), CUDA_SUCCESS);
+        assert_eq!(cur, a);
+        assert_eq!(cuCtxDestroy_v2(b), CUDA_SUCCESS);
+        assert_eq!(cuCtxDestroy_v2(a), CUDA_SUCCESS);
+        hermes_cuda_reset();
+    }
+
+    #[test]
+    fn offline_primary_retain_fails() {
+        let _g = TEST_LOCK.lock().unwrap();
+        hermes_cuda_reset();
+        let mut ctx = 0u64;
+        assert_eq!(
+            cuDevicePrimaryCtxRetain(&mut ctx, 0),
+            CUDA_ERROR_HERMES_GSP_OFFLINE
+        );
     }
 }

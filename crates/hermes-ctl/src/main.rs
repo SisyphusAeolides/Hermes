@@ -29,12 +29,12 @@ use hermes_cccl::{
     THRUST_PUBLIC_HEADERS, hermes_sort,
 };
 use hermes_cuda::{
-    self, cuCtxCreate_v2, cuCtxDestroy_v2, cuDeviceGetCount, cuEventCreate, cuEventDestroy_v2,
-    cuEventRecord, cuEventSynchronize, cuInit, cuLaunchKernel, cuMemAlloc_v2, cuMemFree_v2,
-    cuMemsetD8_v2, cuModuleGetFunction, cuModuleLoadData, cuModuleUnload, cuStreamCreate,
-    cuStreamDestroy_v2, cuStreamSynchronize, hermes_cuda_cccl_version,
-    hermes_cuda_driver_entry_count, hermes_cuda_reset, hermes_cuda_set_gsp_online,
-    CUDA_ERROR_HERMES_GSP_OFFLINE, CUDA_SUCCESS,
+    self, cuDeviceGetCount, cuDevicePrimaryCtxRelease, cuDevicePrimaryCtxRetain, cuEventCreate,
+    cuEventDestroy_v2, cuEventRecord, cuEventSynchronize, cuInit, cuLaunchKernel, cuMemAlloc_v2,
+    cuMemFree_v2, cuMemGetInfo_v2, cuMemsetD8_v2, cuModuleGetFunction, cuModuleLoadData,
+    cuModuleUnload, cuStreamCreate, cuStreamDestroy_v2, cuStreamSynchronize,
+    hermes_cuda_cccl_version, hermes_cuda_driver_entry_count, hermes_cuda_reset,
+    hermes_cuda_set_gsp_online, CUDA_ERROR_HERMES_GSP_OFFLINE, CUDA_SUCCESS,
 };
 use hermes_drm::{
     page_flip, AtomicCommit, AtomicRequest, DisplayMode, DrmDevice, Framebuffer, PageFlipRequest,
@@ -644,8 +644,14 @@ fn cuda_smoke(mode: &str) {
         "deep" => {
             hermes_cuda_set_gsp_online(true);
             assert_eq!(cuInit(0), CUDA_SUCCESS);
-            let mut ctx = 0u64;
-            assert_eq!(cuCtxCreate_v2(&mut ctx, 0, 0), CUDA_SUCCESS);
+            // Primary context path (runtime-style).
+            let mut pctx = 0u64;
+            assert_eq!(cuDevicePrimaryCtxRetain(&mut pctx, 0), CUDA_SUCCESS);
+            let mut free = 0u64;
+            let mut total = 0u64;
+            assert_eq!(cuMemGetInfo_v2(&mut free, &mut total), CUDA_SUCCESS);
+            println!("primary mem free={free} total={total}");
+            assert!(total > 0 && free <= total);
             let mut stream = 0u64;
             assert_eq!(cuStreamCreate(&mut stream, 0), CUDA_SUCCESS);
             let mut ev = 0u64;
@@ -681,13 +687,15 @@ fn cuda_smoke(mode: &str) {
             assert_eq!(cuMemAlloc_v2(&mut dptr, 64), CUDA_SUCCESS);
             assert_eq!(cuMemsetD8_v2(dptr, 0xcd, 64), CUDA_SUCCESS);
             assert_eq!(cuStreamSynchronize(stream), CUDA_SUCCESS);
+            assert_eq!(cuMemGetInfo_v2(&mut free, &mut total), CUDA_SUCCESS);
+            assert_eq!(free, total - 64);
             assert_eq!(cuMemFree_v2(dptr), CUDA_SUCCESS);
             assert_eq!(cuModuleUnload(module), CUDA_SUCCESS);
             assert_eq!(cuEventDestroy_v2(ev), CUDA_SUCCESS);
             assert_eq!(cuStreamDestroy_v2(stream), CUDA_SUCCESS);
-            assert_eq!(cuCtxDestroy_v2(ctx), CUDA_SUCCESS);
+            assert_eq!(cuDevicePrimaryCtxRelease(0), CUDA_SUCCESS);
             println!(
-                "cuda deep: stream+event+module+launch+memset ok (entries={})",
+                "cuda deep: primary+memgetinfo+stream+event+module+launch+memset ok (entries={})",
                 hermes_cuda_driver_entry_count()
             );
             hermes_cuda_reset();
@@ -1120,6 +1128,28 @@ fn dropin_complete_cmd() {
         println!("kmod name ok: {m}");
     }
 
-    println!("dropin-complete: PASS (catalog + gates + multi-surface session)");
+    // 8) nvidia-modprobe is catalogued (binary built as hermes-ctl target).
+    assert!(DROP_IN_CATALOG
+        .iter()
+        .any(|s| s.name == hermes_linux::userspace::NVIDIA_MODPROBE));
+    println!("nvidia-modprobe catalogued: PASS");
+
+    // 9) CUDA primary + Mesa GL string after Online.
+    hermes_cuda::hermes_cuda_set_gsp_online(true);
+    assert_eq!(hermes_cuda::cuInit(0), CUDA_SUCCESS);
+    let mut pctx = 0u64;
+    assert_eq!(cuDevicePrimaryCtxRetain(&mut pctx, 0), CUDA_SUCCESS);
+    let mut free = 0u64;
+    let mut total = 0u64;
+    assert_eq!(cuMemGetInfo_v2(&mut free, &mut total), CUDA_SUCCESS);
+    assert!(total > 0);
+    assert_eq!(cuDevicePrimaryCtxRelease(0), CUDA_SUCCESS);
+    hermes_cuda::hermes_cuda_reset();
+    hermes_mesa::hermes_mesa_set_gsp_online(true);
+    let glv = hermes_mesa::glGetString(hermes_mesa::GL_VENDOR);
+    assert!(!glv.is_null());
+    println!("glGetString vendor ok; cuda primary+memgetinfo ok");
+
+    println!("dropin-complete: PASS (catalog + gates + multi-surface session + modprobe/cuda/gl)");
 }
 

@@ -53,8 +53,10 @@ cuInit / cudaGetDeviceCount
 ```
 
 Driver surface currently includes (GSP-gated): `cuInit`, device query/attrs,
-`cuCtx*`, `cuMem*`, `cuMemcpy*`, `cuMemset*`, `cuModule*` / `cuLaunchKernel`,
-`cuStream*`, `cuEvent*`, plus runtime aliases (`cudaMalloc`, `cudaStream*`, …).
+`cuCtx*` / primary context retain-release, `cuMem*` / `cuMemGetInfo_v2`,
+`cuMemcpy*`, `cuMemset*`, `cuModule*` / `cuLaunchKernel`, `cuStream*`,
+`cuEvent*`, plus runtime aliases (`cudaMalloc`, `cudaMemGetInfo`,
+`cudaSetDevice`, `cudaStream*`, …).
 
 Host Thrust algorithms can run on CPU without a device; they still do not
 claim a GPU.

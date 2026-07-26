@@ -46,3 +46,7 @@ dropInKinds = suc (suc (suc (suc (suc zero))))
 
 kmodNames : Nat
 kmodNames = suc (suc (suc (suc (suc zero))))
+
+-- userspace bins: nvidia-smi, nvidia-settings, nvidia-modprobe
+userspaceBins : Nat
+userspaceBins = suc (suc (suc zero))

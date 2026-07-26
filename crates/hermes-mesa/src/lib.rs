@@ -252,6 +252,37 @@ pub extern "C" fn glGetError() -> GLenum {
     }
 }
 
+// glGetString name tokens (subset of GL).
+pub const GL_VENDOR: GLenum = 0x1F00;
+pub const GL_RENDERER: GLenum = 0x1F01;
+pub const GL_VERSION: GLenum = 0x1F02;
+pub const GL_EXTENSIONS: GLenum = 0x1F03;
+pub const GL_SHADING_LANGUAGE_VERSION: GLenum = 0x8B8C;
+
+// Stable C strings for the GL identity surface (valid for process lifetime).
+static GL_STR_VENDOR: &[u8] = b"Hermes GSP\0";
+static GL_STR_RENDERER: &[u8] = b"Hermes Mesa/NVK attach (software)\0";
+static GL_STR_VERSION: &[u8] = b"4.6 Hermes GSP\0";
+static GL_STR_EXTENSIONS: &[u8] = b"GL_ARB_vertex_buffer_object GL_ARB_framebuffer_object\0";
+static GL_STR_GLSL: &[u8] = b"4.60 Hermes\0";
+static GL_STR_EMPTY: &[u8] = b"\0";
+
+/// `glGetString` — GSP Online required; Offline returns null (classic invalid).
+#[no_mangle]
+pub extern "C" fn glGetString(name: GLenum) -> *const u8 {
+    if !hermes_mesa_gsp_online() {
+        return core::ptr::null();
+    }
+    match name {
+        GL_VENDOR => GL_STR_VENDOR.as_ptr(),
+        GL_RENDERER => GL_STR_RENDERER.as_ptr(),
+        GL_VERSION => GL_STR_VERSION.as_ptr(),
+        GL_EXTENSIONS => GL_STR_EXTENSIONS.as_ptr(),
+        GL_SHADING_LANGUAGE_VERSION => GL_STR_GLSL.as_ptr(),
+        _ => GL_STR_EMPTY.as_ptr(),
+    }
+}
+
 /// Create a software GL context token (not full GLX/EGL).
 pub fn hermes_gl_create_context() -> Option<u32> {
     if !hermes_mesa_gsp_online() {
@@ -427,6 +458,21 @@ mod tests {
         hermes_mesa_set_gsp_online(true);
         assert_eq!(glGetError(), 0);
         assert!(hermes_gl_create_context().is_some());
+        hermes_mesa_reset();
+    }
+
+    #[test]
+    fn gl_get_string_requires_online() {
+        let _g = T.lock().unwrap();
+        hermes_mesa_reset();
+        assert!(glGetString(GL_VENDOR).is_null());
+        hermes_mesa_set_gsp_online(true);
+        let p = glGetString(GL_VENDOR);
+        assert!(!p.is_null());
+        let s = unsafe { std::ffi::CStr::from_ptr(p as *const i8) };
+        assert!(s.to_bytes().starts_with(b"Hermes"));
+        let r = glGetString(GL_RENDERER);
+        assert!(!r.is_null());
         hermes_mesa_reset();
     }
 

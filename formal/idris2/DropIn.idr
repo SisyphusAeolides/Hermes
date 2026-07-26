@@ -46,3 +46,8 @@ dropInKinds = 5  -- kmod, device, bin, lib, surface
 public export
 kmodNames : Nat
 kmodNames = 5  -- nvidia, modeset, uvm, drm, peermem
+
+||| Userspace bins: nvidia-smi, nvidia-settings, nvidia-modprobe.
+public export
+userspaceBins : Nat
+userspaceBins = 3

@@ -19,6 +19,7 @@ cargo run -p hermes-ctl --bin hermes-ctl -- dropin-complete
 | `nvidia-peermem` | Peer memory |
 | `nvidia-settings` | GUI/CLI control |
 | `nvidia-smi` / NVML | Management queries |
+| `nvidia-modprobe` | Module/device helper (fail-closed status + load) |
 | `/dev/nvidia*` | Character devices |
 
 Hermes provides personalities and userspace binaries under those names. Binding
@@ -68,5 +69,23 @@ cargo run -p hermes-ctl --bin nvidia-smi -- --hermes-sim-online
 
 `session-promote` discovers host GPUs, runs complete-evidence Online, registers a
 compute process, binds CUDA + Mesa, and leaves process rows visible to smi.
+
+### nvidia-modprobe
+
+```sh
+cargo run -p hermes-ctl --bin nvidia-modprobe -- --status
+cargo run -p hermes-ctl --bin nvidia-modprobe -- -u --verbose
+```
+
+Reports module/device presence honestly. Load attempts use `modprobe`/`insmod`
+and never claim GSP Online. Device node creation refuses forged majors when the
+kernel has not registered an `nvidia` char device.
+
+### Stage prefix
+
+```sh
+sh scripts/stage-dropin.sh
+# → staging/dropin/{bin,lib,share/...} with soname links + ICD/EGL vendor JSON
+```
 
 See `docs/DRM_MESA.md` and `docs/CCCL_CUDA.md`.

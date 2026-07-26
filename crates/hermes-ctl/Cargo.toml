@@ -16,6 +16,10 @@ path = "src/main.rs"
 name = "nvidia-smi"
 path = "src/smi_main.rs"
 
+[[bin]]
+name = "nvidia-modprobe"
+path = "src/modprobe_main.rs"
+
 [dependencies]
 hermes-core = { workspace = true }
 hermes-gsp = { workspace = true }

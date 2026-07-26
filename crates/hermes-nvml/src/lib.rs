@@ -804,6 +804,103 @@ pub extern "C" fn nvmlDeviceGetComputeMode(device: NvmlDevice_t, mode: *mut u32)
     })
 }
 
+/// NVML brand type (subset of nvmlBrandType_t).
+pub const NVML_BRAND_UNKNOWN: u32 = 0;
+pub const NVML_BRAND_QUADRO: u32 = 1;
+pub const NVML_BRAND_TESLA: u32 = 2;
+pub const NVML_BRAND_NVS: u32 = 3;
+pub const NVML_BRAND_GRID: u32 = 4;
+pub const NVML_BRAND_GEFORCE: u32 = 5;
+pub const NVML_BRAND_TITAN: u32 = 6;
+pub const NVML_BRAND_NVIDIA_VAPPS: u32 = 7;
+pub const NVML_BRAND_NVIDIA_VPC: u32 = 8;
+pub const NVML_BRAND_NVIDIA_VGAMING: u32 = 9;
+pub const NVML_BRAND_QUADRO_RTX: u32 = 10;
+pub const NVML_BRAND_NVIDIA_RTX: u32 = 11;
+pub const NVML_BRAND_NVIDIA: u32 = 12;
+pub const NVML_BRAND_GEFORCE_RTX: u32 = 13;
+pub const NVML_BRAND_TITAN_RTX: u32 = 14;
+
+fn brand_for_device(device_id: u16, name: &str) -> u32 {
+    let n = name.to_ascii_lowercase();
+    if n.contains("quadro") || n.contains("rtx a") || n.contains("t1000") || n.contains("t600") {
+        return NVML_BRAND_QUADRO_RTX;
+    }
+    if n.contains("tesla") || n.contains("a100") || n.contains("h100") || n.contains("l40") {
+        return NVML_BRAND_TESLA;
+    }
+    if n.contains("titan") {
+        return NVML_BRAND_TITAN_RTX;
+    }
+    if n.contains("geforce") || n.contains("rtx 20") || n.contains("rtx 30") || n.contains("rtx 40")
+    {
+        return NVML_BRAND_GEFORCE_RTX;
+    }
+    // Turing workstation/mobile often Quadro-class (e.g. 1fb9 T1000).
+    match device_id {
+        0x1fb9 | 0x1fb8 | 0x1fb0 | 0x1eba | 0x1eb8 => NVML_BRAND_QUADRO_RTX,
+        _ => NVML_BRAND_NVIDIA,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetBrand(device: NvmlDevice_t, brand: *mut u32) -> NvmlReturn {
+    if brand.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        let idx = match handle_to_index(device) {
+            Some(i) if i < s.gpus.len() => i,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        let g = &s.gpus[idx];
+        unsafe {
+            *brand = brand_for_device(g.device_id, &g.name);
+        }
+        NVML_SUCCESS
+    })
+}
+
+/// Fan speed percent. Offline → not supported (fail-closed, not a fake 0).
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetFanSpeed(device: NvmlDevice_t, speed: *mut u32) -> NvmlReturn {
+    if speed.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        let idx = match handle_to_index(device) {
+            Some(i) if i < s.gpus.len() => i,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        if !s.gpus[idx].manifold.is_online() {
+            return NVML_ERROR_NOT_SUPPORTED;
+        }
+        // Host sim value after Online; not a claim about physical tachometers.
+        unsafe {
+            *speed = 30;
+        }
+        NVML_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetFanSpeed_v2(
+    device: NvmlDevice_t,
+    fan: u32,
+    speed: *mut u32,
+) -> NvmlReturn {
+    if fan != 0 {
+        return NVML_ERROR_NOT_SUPPORTED;
+    }
+    nvmlDeviceGetFanSpeed(device, speed)
+}
+
 #[no_mangle]
 pub extern "C" fn nvmlSystemGetDriverVersion(buffer: *mut i8, length: u32) -> NvmlReturn {
     copy_cstr(b"Hermes-GSP 0.1.0\0", buffer, length)
@@ -944,6 +1041,12 @@ mod tests {
         let mut temp = 0u32;
         assert_eq!(nvmlDeviceGetTemperature(h, 0, &mut temp), NVML_SUCCESS);
         assert_eq!(temp, 42);
+        let mut brand = 0u32;
+        assert_eq!(nvmlDeviceGetBrand(h, &mut brand), NVML_SUCCESS);
+        assert_eq!(brand, NVML_BRAND_QUADRO_RTX);
+        let mut fan = 0u32;
+        assert_eq!(nvmlDeviceGetFanSpeed(h, &mut fan), NVML_SUCCESS);
+        assert_eq!(fan, 30);
         let mut mw = 0u32;
         assert_eq!(nvmlDeviceGetPowerUsage(h, &mut mw), NVML_SUCCESS);
         assert!(mw > 0);
@@ -957,6 +1060,18 @@ mod tests {
         let line = hermes_nvml_format_device_line(0).unwrap();
         assert!(line.contains("Hermes T1000"));
         assert!(line.contains("ONLINE") || line.contains("Online") || line.contains("phase="));
+        hermes_nvml_reset();
+    }
+
+    #[test]
+    fn offline_fan_not_supported() {
+        let _g = TEST_LOCK.lock().unwrap();
+        hermes_nvml_reset();
+        hermes_nvml_bind_offline_gpu(1);
+        let mut h = 0u64;
+        assert_eq!(nvmlDeviceGetHandleByIndex_v2(0, &mut h), NVML_SUCCESS);
+        let mut fan = 0u32;
+        assert_eq!(nvmlDeviceGetFanSpeed(h, &mut fan), NVML_ERROR_NOT_SUPPORTED);
         hermes_nvml_reset();
     }
 

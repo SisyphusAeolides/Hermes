@@ -170,6 +170,11 @@ pub const DROP_IN_CATALOG: &[DropInSurface] = &[
         hermes_crate: "hermes-settings",
     },
     DropInSurface {
+        kind: "bin",
+        name: userspace::NVIDIA_MODPROBE,
+        hermes_crate: "hermes-ctl",
+    },
+    DropInSurface {
         kind: "lib",
         name: userspace::LIB_NVIDIA_ML,
         hermes_crate: "hermes-nvml",
@@ -319,6 +324,9 @@ mod tests {
         assert!(DROP_IN_CATALOG
             .iter()
             .any(|s| s.name == userspace::NVIDIA_SETTINGS));
+        assert!(DROP_IN_CATALOG
+            .iter()
+            .any(|s| s.name == userspace::NVIDIA_MODPROBE));
         assert!(DROP_IN_CATALOG
             .iter()
             .any(|s| s.name == userspace::LIB_CUDA));
