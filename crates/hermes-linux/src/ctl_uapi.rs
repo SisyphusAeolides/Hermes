@@ -16,6 +16,34 @@ pub const HERMES_MOD_MODESET: u32 = 1 << 1;
 pub const HERMES_MOD_UVM: u32 = 1 << 2;
 pub const HERMES_MOD_DRM: u32 = 1 << 3;
 pub const HERMES_MOD_PEERMEM: u32 = 1 << 4;
+pub const HERMES_MOD_ALL_OPEN_STACK: u32 = HERMES_MOD_NVIDIA
+    | HERMES_MOD_MODESET
+    | HERMES_MOD_UVM
+    | HERMES_MOD_DRM
+    | HERMES_MOD_PEERMEM;
+
+/// Compose mask from companion presence (mirrors `hermes_ctl_module_mask_compose`).
+pub fn hermes_ctl_module_mask_compose(
+    modeset: bool,
+    uvm: bool,
+    drm: bool,
+    peermem: bool,
+) -> u32 {
+    let mut m = HERMES_MOD_NVIDIA;
+    if modeset {
+        m |= HERMES_MOD_MODESET;
+    }
+    if uvm {
+        m |= HERMES_MOD_UVM;
+    }
+    if drm {
+        m |= HERMES_MOD_DRM;
+    }
+    if peermem {
+        m |= HERMES_MOD_PEERMEM;
+    }
+    m
+}
 
 /// Packed status from `/dev/nvidiactl` (or host tests).
 #[repr(C)]
@@ -158,6 +186,25 @@ mod tests {
         assert!(st2.is_online());
         assert_eq!(st2.phase_label(), "ONLINE");
         assert_eq!(st2.modules_listed().len(), 3);
+    }
+
+    #[test]
+    fn companion_mask_compose_ors_soft_deps() {
+        assert_eq!(
+            hermes_ctl_module_mask_compose(false, false, false, false),
+            HERMES_MOD_NVIDIA
+        );
+        assert_eq!(
+            hermes_ctl_module_mask_compose(true, true, true, true),
+            HERMES_MOD_ALL_OPEN_STACK
+        );
+        let partial = hermes_ctl_module_mask_compose(true, false, true, false);
+        assert_eq!(
+            partial,
+            HERMES_MOD_NVIDIA | HERMES_MOD_MODESET | HERMES_MOD_DRM
+        );
+        let st = HermesCtlStatus::fill(false, 0, HERMES_MOD_ALL_OPEN_STACK);
+        assert_eq!(st.modules_listed().len(), 5);
     }
 
     #[test]

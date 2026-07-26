@@ -75,6 +75,28 @@ if online not in (0, 1):
 if online == 1 and phase != 5:
     print("FAIL: online set with non-ONLINE phase")
     sys.exit(1)
+# Companion soft-deps ORed into mask (kernel names use underscores).
+import os
+def live(name):
+    return os.path.isdir(f"/sys/module/{name}")
+HERMES_MOD_NVIDIA = 1 << 0
+HERMES_MOD_MODESET = 1 << 1
+HERMES_MOD_UVM = 1 << 2
+HERMES_MOD_DRM = 1 << 3
+HERMES_MOD_PEERMEM = 1 << 4
+expect = HERMES_MOD_NVIDIA
+if live("nvidia_modeset"):
+    expect |= HERMES_MOD_MODESET
+if live("nvidia_uvm"):
+    expect |= HERMES_MOD_UVM
+if live("nvidia_drm"):
+    expect |= HERMES_MOD_DRM
+if live("nvidia_peermem"):
+    expect |= HERMES_MOD_PEERMEM
+if mask != expect:
+    print(f"FAIL: module_mask 0x{mask:x} != expected 0x{expect:x}")
+    sys.exit(1)
+print(f"companion mask OR ok (0x{mask:x})")
 print("nvidiactl ioctl: PASS (real chardev path)")
 # Optional DRM status if node present.
 drm = "/dev/nvidia-drm"

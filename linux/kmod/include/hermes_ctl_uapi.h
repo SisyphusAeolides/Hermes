@@ -25,6 +25,31 @@ struct hermes_ctl_status {
 #define HERMES_MOD_DRM (1u << 3)
 #define HERMES_MOD_PEERMEM (1u << 4)
 
+#define HERMES_MOD_ALL_OPEN_STACK                                              \
+	(HERMES_MOD_NVIDIA | HERMES_MOD_MODESET | HERMES_MOD_UVM |             \
+	 HERMES_MOD_DRM | HERMES_MOD_PEERMEM)
+
+/*
+ * Compose a mask from live companion presence flags (1 = present).
+ * Primary nvidia is always bit0 when this code runs inside nvidia.ko.
+ * Host-testable pure combinator (no kernel).
+ */
+static inline unsigned hermes_ctl_module_mask_compose(int modeset, int uvm,
+						     int drm, int peermem)
+{
+	unsigned m = HERMES_MOD_NVIDIA;
+
+	if (modeset)
+		m |= HERMES_MOD_MODESET;
+	if (uvm)
+		m |= HERMES_MOD_UVM;
+	if (drm)
+		m |= HERMES_MOD_DRM;
+	if (peermem)
+		m |= HERMES_MOD_PEERMEM;
+	return m;
+}
+
 static inline void hermes_ctl_status_fill(struct hermes_ctl_status *st, int online,
 					  unsigned phase, unsigned module_mask)
 {

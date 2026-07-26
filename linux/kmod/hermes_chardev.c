@@ -11,6 +11,8 @@
 #include <linux/uaccess.h>
 #include <linux/mutex.h>
 #include <linux/version.h>
+#include <linux/namei.h>
+#include <linux/path.h>
 
 #include "include/hermes_kmod.h"
 #include "include/hermes_ctl_uapi.h"
@@ -42,6 +44,69 @@ static char *hermes_char_devnode(struct device *dev, umode_t *mode)
 	return NULL;
 }
 
+/*
+ * Probe open-stack companion modules via /sys/module/<name>.
+ * Prefer sysfs over find_module: module_mutex is not exported to modules
+ * on modern kernels. Soft-deps may be absent; never invents Online.
+ */
+static bool hermes_kernel_module_live(const char *name)
+{
+	char path[64];
+	struct path p;
+	int err;
+
+	if (!name || !*name)
+		return false;
+	/* Kernel object names use underscores (nvidia_drm, not nvidia-drm). */
+	scnprintf(path, sizeof(path), "/sys/module/%s", name);
+	err = kern_path(path, LOOKUP_FOLLOW, &p);
+	if (err)
+		return false;
+	path_put(&p);
+	return true;
+}
+
+static unsigned hermes_live_module_mask(void)
+{
+	/*
+	 * Kernel object names use '_' (nvidia_drm.ko → nvidia_drm).
+	 * Classic drop-in filenames may use '-' — mask bits are filename-agnostic.
+	 */
+	return hermes_ctl_module_mask_compose(
+		hermes_kernel_module_live("nvidia_modeset") ? 1 : 0,
+		hermes_kernel_module_live("nvidia_uvm") ? 1 : 0,
+		hermes_kernel_module_live("nvidia_drm") ? 1 : 0,
+		hermes_kernel_module_live("nvidia_peermem") ? 1 : 0);
+}
+
+/* Format classic names for read() status line (comma-separated). */
+static int hermes_format_modules(char *buf, size_t len, unsigned mask)
+{
+	int n = 0;
+	int first = 1;
+
+	if (!buf || len == 0)
+		return 0;
+	buf[0] = '\0';
+
+#define APPEND(bit, name)                                                      \
+	do {                                                                   \
+		if ((mask) & (bit)) {                                          \
+			n += scnprintf((buf) + n, (len) - (size_t)n, "%s%s",   \
+				       first ? "" : ",", (name));              \
+			first = 0;                                             \
+		}                                                              \
+	} while (0)
+
+	APPEND(HERMES_MOD_NVIDIA, "nvidia");
+	APPEND(HERMES_MOD_MODESET, "nvidia-modeset");
+	APPEND(HERMES_MOD_UVM, "nvidia-uvm");
+	APPEND(HERMES_MOD_DRM, "nvidia-drm");
+	APPEND(HERMES_MOD_PEERMEM, "nvidia-peermem");
+#undef APPEND
+	return n;
+}
+
 static int hermes_char_open(struct inode *inode, struct file *file)
 {
 	unsigned int minor = iminor(inode);
@@ -61,14 +126,16 @@ static int hermes_char_release(struct inode *inode, struct file *file)
 static long hermes_char_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	struct hermes_ctl_status st;
+	unsigned mask;
 
 	if (cmd != HERMES_CTL_IOCTL_STATUS)
 		return -ENOTTY;
 
 	mutex_lock(&hermes_char_lock);
-	/* Primary nvidia.ko is loaded if this code runs; companions optional later. */
+	/* Primary + live companions; Online remains fail-closed from GSP phase. */
+	mask = hermes_live_module_mask();
 	hermes_ctl_status_fill(&st, hermes_gsp_is_online() ? 1 : 0,
-			       (unsigned)hermes_gsp_phase(), HERMES_MOD_NVIDIA);
+			       (unsigned)hermes_gsp_phase(), mask);
 	mutex_unlock(&hermes_char_lock);
 
 	if (copy_to_user((void __user *)arg, &st, sizeof(st)))
@@ -79,15 +146,20 @@ static long hermes_char_ioctl(struct file *file, unsigned int cmd, unsigned long
 static ssize_t hermes_char_read(struct file *file, char __user *buf, size_t len,
 				loff_t *ppos)
 {
-	char line[64];
+	char mods[96];
+	char line[192];
 	int n;
+	unsigned mask;
 
 	if (*ppos != 0)
 		return 0;
+
+	mask = hermes_live_module_mask();
+	hermes_format_modules(mods, sizeof(mods), mask);
 	n = scnprintf(line, sizeof(line),
-		      "hermes gsp_online=%d phase=%s modules=nvidia status_ver=%u\n",
+		      "hermes gsp_online=%d phase=%s modules=%s status_ver=%u mask=0x%x\n",
 		      hermes_gsp_is_online(), hermes_phase_name(hermes_gsp_phase()),
-		      HERMES_CTL_STATUS_VERSION);
+		      mods, HERMES_CTL_STATUS_VERSION, mask);
 	if (len < (size_t)n)
 		return -EINVAL;
 	if (copy_to_user(buf, line, n))

@@ -340,10 +340,11 @@ pub fn kmod_load_smoke() -> i32 {
     match &p.ctl_status {
         Some(st) => {
             println!(
-                "live ioctl: online={} phase={} ver={} mask={:?}",
+                "live ioctl: online={} phase={} ver={} mask=0x{:x} modules={:?}",
                 st.is_online(),
                 st.phase_label(),
                 st.version,
+                st.module_mask,
                 st.modules_listed()
             );
             if st.version < 2 {
@@ -360,6 +361,23 @@ pub fn kmod_load_smoke() -> i32 {
             } else {
                 println!("fail-closed Offline after bare load: PASS");
             }
+            // Companion soft-deps must appear in module_mask when loaded.
+            if (st.module_mask & hermes_linux::HERMES_MOD_NVIDIA) == 0 {
+                eprintln!("error: primary nvidia bit missing from mask");
+                return 1;
+            }
+            let expected = companion_mask_from_sysfs();
+            if st.module_mask != expected {
+                eprintln!(
+                    "error: module_mask 0x{:x} != expected companions 0x{:x}",
+                    st.module_mask, expected
+                );
+                return 1;
+            }
+            println!(
+                "companion OR mask matches live modules (0x{:x}): PASS",
+                st.module_mask
+            );
         }
         None => {
             eprintln!(
@@ -371,6 +389,22 @@ pub fn kmod_load_smoke() -> i32 {
     }
     println!("kmod-load-smoke: PASS");
     0
+}
+
+/// Expected ioctl mask from /sys/module (primary always set if we got here).
+fn companion_mask_from_sysfs() -> u32 {
+    use hermes_linux::{
+        hermes_ctl_module_mask_compose, HERMES_MOD_NVIDIA,
+    };
+    let m = hermes_ctl_module_mask_compose(
+        module_loaded("nvidia-modeset"),
+        module_loaded("nvidia-uvm"),
+        module_loaded("nvidia-drm"),
+        module_loaded("nvidia-peermem"),
+    );
+    // kmod-load-smoke requires nvidia.ko; compose already sets NVIDIA bit.
+    debug_assert!((m & HERMES_MOD_NVIDIA) != 0);
+    m
 }
 
 #[cfg(test)]
