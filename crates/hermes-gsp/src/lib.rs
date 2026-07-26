@@ -1,8 +1,9 @@
 //! Measured NVIDIA GSP-RM firmware admission and bootstrap gates.
 //!
 //! Firmware bytes are never committed to this repository. Callers stage
-//! redistributable images from a matching NVIDIA driver release; Hermes
-//! admits them only after exact length and SHA-256 match a pinned manifest.
+//! redistributable images from a matching NVIDIA driver / linux-firmware
+//! release; Hermes admits them only after exact length, SHA-256, and GSP ELF
+//! structure match.
 
 #![no_std]
 
@@ -10,7 +11,9 @@ extern crate alloc;
 
 pub mod bootstrap;
 pub mod bringup;
+pub mod elf_gsp;
 pub mod firmware;
+pub mod layout;
 pub mod session;
 
 pub use bootstrap::{
@@ -20,11 +23,17 @@ pub use bootstrap::{
 pub use bringup::{
     BringupFault, BringupReport, BringupRequest, HardwareEvidence, run_bringup,
 };
+pub use elf_gsp::{fwversion_bytes, parse_gsp_rm_elf, GspElfEvidence};
 pub use firmware::{
     firmware_family_for_device, firmware_version, FirmwareFamily, NvidiaGspFirmwareAuthority,
-    NvidiaGspFirmwareManifest, VerifiedFirmware, NVIDIA_GSP_RM_610_43_03,
+    NvidiaGspFirmwareManifest, VerifiedFirmware, NVIDIA_GSP_RM_610_43_02, NVIDIA_GSP_RM_610_43_03,
+    NVIDIA_GSP_RM_DEFAULT_ALLOW_LIST,
 };
 pub use firmware::sha256_bytes;
+pub use layout::{
+    chip_for_architecture, chip_gsp_relative, openrm_gsp_basename, openrm_gsp_relative,
+    BootstrapArtifactKind, NvidiaChipDir, TURING_BOOTSTRAP_KINDS,
+};
 pub use session::{
     default_negotiated_features, drive_full_success, plan_activation, ActivationPlan,
     ActivationStep,

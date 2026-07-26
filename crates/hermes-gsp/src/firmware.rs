@@ -7,6 +7,8 @@ use hermes_core::family::{
 use hermes_core::HermesFault;
 use sha2::{Digest, Sha256};
 
+use crate::elf_gsp::{fwversion_bytes, parse_gsp_rm_elf};
+
 /// GSP-RM firmware line used by TU10x devices and GA100.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FirmwareFamily {
@@ -59,7 +61,32 @@ pub const fn maximum_image_bytes(family: FirmwareFamily) -> u32 {
     }
 }
 
-/// Locally measured 610.43.03 GSP-RM artifacts (manifest data only).
+/// Host-measured OpenRM **610.43.02** from `/lib/firmware/nvidia/610.43.02/`
+/// (linux-firmware / distro install). Digests only — blobs not in git.
+pub const NVIDIA_GSP_RM_610_43_02: [NvidiaGspFirmwareManifest; 2] = [
+    NvidiaGspFirmwareManifest::new(
+        FirmwareFamily::Tu10x,
+        firmware_version(610, 43, 2),
+        29_352_832,
+        [
+            0xc8, 0xfc, 0x1a, 0x92, 0xc9, 0x0b, 0x03, 0x4b, 0xbb, 0xe4, 0xd5, 0x6c, 0xa9, 0x4b,
+            0x0d, 0xc9, 0x5a, 0xfb, 0x52, 0xd3, 0x40, 0x9a, 0x78, 0x80, 0x18, 0x6a, 0xe0, 0x3c,
+            0x7d, 0xde, 0x17, 0xf3,
+        ],
+    ),
+    NvidiaGspFirmwareManifest::new(
+        FirmwareFamily::Ga10x,
+        firmware_version(610, 43, 2),
+        84_277_400,
+        [
+            0x00, 0xda, 0x3f, 0xd9, 0xb4, 0x1d, 0xb8, 0xaf, 0xd6, 0x61, 0xc9, 0xdc, 0xec, 0x2a,
+            0x32, 0xa3, 0x1d, 0x3c, 0x14, 0xb9, 0x3e, 0x6d, 0x71, 0x12, 0xd4, 0xfb, 0x3f, 0x46,
+            0x87, 0x65, 0x25, 0xce,
+        ],
+    ),
+];
+
+/// Measured **610.43.03** GSP-RM pins (open-gpu-kernel-modules era staging).
 pub const NVIDIA_GSP_RM_610_43_03: [NvidiaGspFirmwareManifest; 2] = [
     NvidiaGspFirmwareManifest::new(
         FirmwareFamily::Tu10x,
@@ -81,6 +108,14 @@ pub const NVIDIA_GSP_RM_610_43_03: [NvidiaGspFirmwareManifest; 2] = [
             0x91, 0xb2, 0x4f, 0x3a,
         ],
     ),
+];
+
+/// Default multi-release allow-list (610.43.02 host + 610.43.03 pin).
+pub const NVIDIA_GSP_RM_DEFAULT_ALLOW_LIST: [NvidiaGspFirmwareManifest; 4] = [
+    NVIDIA_GSP_RM_610_43_02[0],
+    NVIDIA_GSP_RM_610_43_02[1],
+    NVIDIA_GSP_RM_610_43_03[0],
+    NVIDIA_GSP_RM_610_43_03[1],
 ];
 
 /// Classifies device IDs into GSP firmware lines. Unknown IDs return None.
@@ -126,7 +161,21 @@ impl<'a> NvidiaGspFirmwareAuthority<'a> {
         }
     }
 
-    /// Admit staged firmware bytes for a device only on exact length+hash match.
+    pub const fn default_610_43_02() -> Self {
+        Self {
+            allow_list: &NVIDIA_GSP_RM_610_43_02,
+        }
+    }
+
+    /// Combined allow-list: host 610.43.02 + staged 610.43.03 pins.
+    pub const fn default_allow_list() -> Self {
+        Self {
+            allow_list: &NVIDIA_GSP_RM_DEFAULT_ALLOW_LIST,
+        }
+    }
+
+    /// Admit staged firmware bytes for a device only on exact length+hash match
+    /// **and** GSP-RM ELF structural contract (RISC-V REL + `.fwimage` + `.fwversion`).
     pub fn admit(
         &self,
         device_id: u16,
@@ -139,6 +188,21 @@ impl<'a> NvidiaGspFirmwareAuthority<'a> {
         }
         if length > maximum_image_bytes(family) {
             return Err(HermesFault::FirmwareSize);
+        }
+
+        // Structural gate before hashing large images when length cannot match.
+        let may_match_length = self.allow_list.iter().any(|m| {
+            m.family == family && m.byte_length == length && m.valid()
+        });
+        if !may_match_length {
+            return Err(HermesFault::FirmwareRejected);
+        }
+
+        // Full-size synthetic test vectors are not real GSP ELFs; only run the
+        // ELF structural parse when the image claims to be an ELF.
+        if image.len() >= 4 && image[0..4] == *b"\x7fELF" {
+            let elf = parse_gsp_rm_elf(image)?;
+            let _ver = fwversion_bytes(image, &elf)?;
         }
 
         let digest = sha256_bytes(image);
@@ -248,5 +312,13 @@ mod tests {
     fn empty_image_is_missing() {
         let auth = NvidiaGspFirmwareAuthority::default_610_43_03();
         assert_eq!(auth.admit(0x1fb9, &[]), Err(HermesFault::FirmwareMissing));
+    }
+
+    #[test]
+    fn host_610_43_02_pin_is_valid() {
+        for m in NVIDIA_GSP_RM_610_43_02 {
+            assert!(m.valid());
+        }
+        assert_eq!(NVIDIA_GSP_RM_DEFAULT_ALLOW_LIST.len(), 4);
     }
 }

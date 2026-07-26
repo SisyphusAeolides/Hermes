@@ -6,10 +6,11 @@ use hermes_core::{
     nvidia_architecture, pci_identity,
 };
 use hermes_gsp::{
-    BringupRequest, FirmwareFamily, HardwareEvidence, NVIDIA_GSP_RM_610_43_03,
-    NvidiaGspFirmwareAuthority, NvidiaGspFirmwareManifest, default_negotiated_features,
-    drive_full_success, firmware_family_for_device, firmware_version, plan_activation,
-    sha256_bytes,
+    BringupRequest, FirmwareFamily, HardwareEvidence, NVIDIA_GSP_RM_610_43_02,
+    NVIDIA_GSP_RM_610_43_03, NVIDIA_GSP_RM_DEFAULT_ALLOW_LIST, NvidiaGspFirmwareAuthority,
+    NvidiaGspFirmwareManifest, chip_gsp_relative, default_negotiated_features, drive_full_success,
+    firmware_family_for_device, firmware_version, openrm_gsp_relative, parse_gsp_rm_elf,
+    plan_activation, sha256_bytes, NvidiaChipDir, fwversion_bytes,
 };
 use hermes_linux::{
     MODULE_SURFACES, SimPlatform, linux_bringup, modules, sim_full_hardware,
@@ -34,10 +35,11 @@ fn main() {
             }
         }
         Some("firmware-pin") => firmware_pin(),
+        Some("firmware-scan") => firmware_scan(args.next().as_deref().unwrap_or("/lib/firmware")),
         _ => {
             println!("hermes-ctl — Hermes GSP control\n");
             println!(
-                "commands: status | admit <pci_id> | test-gates | bringup <fail|ok> | modules | firmware-pin"
+                "commands: status | admit <pci_id> | test-gates | bringup <fail|ok|both> | modules | firmware-pin | firmware-scan [root]"
             );
         }
     }
@@ -171,7 +173,56 @@ fn bringup_cmd(mode: &str) {
 }
 
 fn firmware_pin() {
+    println!("allow-list entries: {}", NVIDIA_GSP_RM_DEFAULT_ALLOW_LIST.len());
+    for m in NVIDIA_GSP_RM_610_43_02 {
+        println!(
+            "610.43.02 {:?} len={} sha256={:02x}{:02x}…",
+            m.family, m.byte_length, m.sha256[0], m.sha256[1]
+        );
+    }
     for m in NVIDIA_GSP_RM_610_43_03 {
-        println!("{:?} version={} len={}", m.family, m.version, m.byte_length);
+        println!(
+            "610.43.03 {:?} len={} sha256={:02x}{:02x}…",
+            m.family, m.byte_length, m.sha256[0], m.sha256[1]
+        );
+    }
+    println!(
+        "paths: {} | {}",
+        openrm_gsp_relative("610.43.02", FirmwareFamily::Tu10x),
+        chip_gsp_relative(NvidiaChipDir::Tu117, "570.144")
+    );
+}
+
+fn firmware_scan(root: &str) {
+    println!("scan root: {root}");
+    let auth = NvidiaGspFirmwareAuthority::default_allow_list();
+    for family in [FirmwareFamily::Tu10x, FirmwareFamily::Ga10x] {
+        let rel = openrm_gsp_relative("610.43.02", family);
+        let path = format!("{root}/{rel}");
+        match std::fs::read(&path) {
+            Ok(bytes) => match auth.admit(
+                match family {
+                    FirmwareFamily::Tu10x => 0x1fb9,
+                    FirmwareFamily::Ga10x => 0x2204,
+                },
+                &bytes,
+            ) {
+                Ok(v) => {
+                    let elf = parse_gsp_rm_elf(&bytes).ok();
+                    let ver = elf
+                        .as_ref()
+                        .and_then(|e| fwversion_bytes(&bytes, e).ok())
+                        .map(|s| String::from_utf8_lossy(s).into_owned())
+                        .unwrap_or_else(|| "?".into());
+                    println!(
+                        "ADMIT {rel} len={} version_field={ver} pin_version={}",
+                        v.byte_length, v.version
+                    );
+                }
+                Err(e) => println!("REJECT {rel}: {e:?}"),
+            },
+            Err(_) => println!("ABSENT {rel}"),
+        }
     }
 }
+

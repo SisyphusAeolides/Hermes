@@ -83,12 +83,16 @@ After building:
 Device nodes expected by clients: `/dev/nvidiactl`, `/dev/nvidia0`,
 `/dev/nvidia-uvm`, `/dev/nvidia-modeset`.
 
-Firmware must be staged from a matching driver release (example pin **610.43.03**
-`gsp_tu10x.bin` / `gsp_ga10x.bin`). Digests live in `hermes-gsp`; blobs do not.
+Firmware must be staged from a matching driver release or linux-firmware install.
+Digests and ELF structure live in `hermes-gsp`; **blobs are never committed**.
+
+See [`docs/GSP_FIRMWARE.md`](docs/GSP_FIRMWARE.md) for the reverse-engineered
+layout of [NVIDIA/linux-firmware](https://github.com/NVIDIA/linux-firmware).
 
 ```sh
-# Example host layout (do not commit blobs)
-# /lib/firmware/nvidia/610.43.03/gsp_tu10x.bin
+# Stage from host linux-firmware / OpenRM install
+sh scripts/stage-linux-firmware-gsp.sh /lib/firmware target/hermes-gsp/staged
+cargo run -p hermes-ctl -- firmware-scan /lib/firmware
 ```
 
 ## Turing+ coverage
