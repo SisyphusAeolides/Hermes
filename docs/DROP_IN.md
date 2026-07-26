@@ -40,4 +40,23 @@ Host discover binds Offline NVML slots from PCI. `--hermes-sim-online` promotes
 the first GPU with a complete-evidence Online manifold so power/temp/util query
 paths run through the real NVML ABI.
 
+### nvidia-settings
+
+```sh
+cargo run -p hermes-settings --bin nvidia-settings -- --status
+cargo run -p hermes-settings --bin nvidia-settings -- --query gpus
+HERMES_SETTINGS_SIM_ONLINE=1 cargo run -p hermes-settings --bin nvidia-settings -- --query gpus
+```
+
+Settings discovers the same host GPUs via NVML and prints phase/memory from the
+session (not a fixed empty list).
+
+### Unified stack smoke
+
+```sh
+cargo run -p hermes-ctl --bin hermes-ctl -- stack-smoke
+```
+
+Promotes NVML Online, binds CUDA to the same device name, then runs CUDA/DRM/Mesa/smi smokes.
+
 See `docs/DRM_MESA.md` and `docs/CCCL_CUDA.md`.

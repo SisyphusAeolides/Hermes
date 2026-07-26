@@ -33,3 +33,6 @@ smiListsDevices (mkSession _ (suc _)) = true
 telemetryLegal : Session -> Bool
 telemetryLegal (mkSession online _) = true
 telemetryLegal (mkSession offline _) = false
+
+sessionSurfaces : Nat
+sessionSurfaces = suc (suc (suc (suc zero)))

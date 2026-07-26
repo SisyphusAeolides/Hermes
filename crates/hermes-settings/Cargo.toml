@@ -16,3 +16,4 @@ path = "src/main.rs"
 hermes-core = { workspace = true }
 hermes-gsp = { workspace = true }
 hermes-linux = { workspace = true }
+hermes-nvml = { path = "../hermes-nvml" }

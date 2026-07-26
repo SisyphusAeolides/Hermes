@@ -29,10 +29,10 @@ pub const CUDA_ERROR_UNKNOWN: CudaResult = 999;
 /// Hermes extension: GSP not Online.
 pub const CUDA_ERROR_HERMES_GSP_OFFLINE: CudaResult = 0x4845_524d; // 'HERM'
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Device {
     pub index: u32,
-    pub name: &'static str,
+    pub name: String,
     pub total_mem: u64,
     pub compute_major: u32,
     pub compute_minor: u32,
@@ -154,6 +154,42 @@ pub fn hermes_cuda_gsp_online() -> bool {
     with_state(|s| s.gsp_online)
 }
 
+/// Register a device visible after Online `cuInit` (host/session glue).
+pub fn hermes_cuda_register_device(
+    name: &str,
+    total_mem: u64,
+    compute_major: u32,
+    compute_minor: u32,
+) -> u32 {
+    with_state(|s| {
+        let index = s.devices.len() as u32;
+        s.devices.push(Device {
+            index,
+            name: name.into(),
+            total_mem,
+            compute_major,
+            compute_minor,
+        });
+        index
+    })
+}
+
+/// Clear devices then register one Online session GPU and set GSP Online.
+pub fn hermes_cuda_bind_session_device(
+    name: &str,
+    total_mem: u64,
+    compute_major: u32,
+    compute_minor: u32,
+) {
+    hermes_cuda_reset();
+    hermes_cuda_register_device(name, total_mem, compute_major, compute_minor);
+    hermes_cuda_set_gsp_online(true);
+}
+
+pub fn hermes_cuda_device_count() -> usize {
+    with_state(|s| s.devices.len())
+}
+
 pub fn hermes_cuda_reset() {
     with_state(|s| {
         s.gsp_online = false;
@@ -190,7 +226,7 @@ pub extern "C" fn cuInit(_flags: u32) -> CudaResult {
         if s.devices.is_empty() {
             s.devices.push(Device {
                 index: 0,
-                name: "Hermes GSP GPU",
+                name: "Hermes GSP GPU".into(),
                 total_mem: 8 * 1024 * 1024 * 1024,
                 compute_major: 7,
                 compute_minor: 5,
@@ -1018,6 +1054,22 @@ mod tests {
         hermes_cuda_reset();
         let mut s = 0u64;
         assert_eq!(cuStreamCreate(&mut s, 0), CUDA_ERROR_HERMES_GSP_OFFLINE);
+    }
+
+    #[test]
+    fn session_bind_device_name_visible_after_init() {
+        let _g = TEST_LOCK.lock().unwrap();
+        hermes_cuda_reset();
+        hermes_cuda_bind_session_device("NVIDIA Turing [1fb9]", 8 << 30, 7, 5);
+        assert!(hermes_cuda_gsp_online());
+        assert_eq!(hermes_cuda_device_count(), 1);
+        assert_eq!(cuInit(0), CUDA_SUCCESS);
+        let mut name = [0u8; 64];
+        assert_eq!(cuDeviceGetName(name.as_mut_ptr(), 64, 0), CUDA_SUCCESS);
+        let s = core::str::from_utf8(&name[..name.iter().position(|&b| b == 0).unwrap_or(0)])
+            .unwrap_or("");
+        assert!(s.contains("1fb9") || s.contains("Turing"));
+        hermes_cuda_reset();
     }
 
     #[test]

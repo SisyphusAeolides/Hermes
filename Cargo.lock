@@ -159,6 +159,7 @@ dependencies = [
  "hermes-core",
  "hermes-gsp",
  "hermes-linux",
+ "hermes-nvml",
 ]
 
 [[package]]

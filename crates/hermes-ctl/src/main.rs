@@ -28,7 +28,7 @@ use hermes_cccl::{
     THRUST_PUBLIC_HEADERS, hermes_sort,
 };
 use hermes_cuda::{
-    cuCtxCreate_v2, cuCtxDestroy_v2, cuDeviceGetCount, cuEventCreate, cuEventDestroy_v2,
+    self, cuCtxCreate_v2, cuCtxDestroy_v2, cuDeviceGetCount, cuEventCreate, cuEventDestroy_v2,
     cuEventRecord, cuEventSynchronize, cuInit, cuLaunchKernel, cuMemAlloc_v2, cuMemFree_v2,
     cuMemsetD8_v2, cuModuleGetFunction, cuModuleLoadData, cuModuleUnload, cuStreamCreate,
     cuStreamDestroy_v2, cuStreamSynchronize, hermes_cuda_cccl_version,
@@ -946,10 +946,50 @@ fn mesa_smoke(mode: &str) {
 }
 
 fn stack_smoke() {
-    println!("=== stack-smoke: GSP-gated CUDA + DRM + Mesa ===");
+    println!("=== stack-smoke: drop-in session + CUDA + DRM + Mesa + smi ===");
+    // Shared session: host NVML discover + complete-evidence Online + CUDA bind.
+    use nvidia_ml::{
+        hermes_nvml_discover_host_gpus, hermes_nvml_format_device_line,
+        hermes_nvml_promote_first_sim_online, hermes_nvml_reset, nvmlInit_v2, nvmlShutdown,
+        NVML_SUCCESS,
+    };
+    hermes_nvml_reset();
+    assert_eq!(nvmlInit_v2(), NVML_SUCCESS);
+    let n = hermes_nvml_discover_host_gpus();
+    if n > 0 {
+        assert!(hermes_nvml_promote_first_sim_online());
+    } else {
+        nvidia_ml::hermes_nvml_bind_sim_online_session("Hermes Sim GPU");
+    }
+    let line = hermes_nvml_format_device_line(0).expect("nvml device");
+    println!("session nvml: {line}");
+    assert!(line.contains("ONLINE"));
+    // Mirror Online into CUDA with the same device identity string.
+    let name = line
+        .split('(')
+        .next()
+        .unwrap_or("Hermes GSP GPU")
+        .trim()
+        .trim_start_matches("GPU 0:")
+        .trim();
+    hermes_cuda::hermes_cuda_bind_session_device(name, 8 << 30, 7, 5);
+    assert!(hermes_cuda::hermes_cuda_gsp_online());
+    assert_eq!(hermes_cuda::cuInit(0), CUDA_SUCCESS);
+    let mut dname = [0u8; 64];
+    assert_eq!(
+        hermes_cuda::cuDeviceGetName(dname.as_mut_ptr(), 64, 0),
+        CUDA_SUCCESS
+    );
+    println!(
+        "session cuda: name={}",
+        String::from_utf8_lossy(&dname[..dname.iter().position(|&b| b == 0).unwrap_or(0)])
+    );
+    let _ = nvmlShutdown();
+
     cuda_smoke("deep");
     drm_smoke("gem");
     mesa_smoke("gem");
+    smi_smoke("online");
     println!("stack-smoke: PASS (all layers)");
 }
 

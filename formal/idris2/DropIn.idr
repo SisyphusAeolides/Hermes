@@ -26,3 +26,8 @@ telemetryLegal : Session -> Bool
 telemetryLegal s = case phase s of
   Online => True
   Offline => False
+
+||| CUDA and smi share one Online promote.
+public export
+sessionSurfaces : Nat
+sessionSurfaces = 4  -- smi, nvml, cuda, settings
