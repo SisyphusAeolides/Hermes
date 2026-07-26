@@ -14,6 +14,7 @@ linux/kmod/*.o.ur-safe
 linux/kmod/tests/test_bringup_host
 linux/kmod/tests/test_drm_host
 linux/kmod/tests/test_ctl_status_host
+linux/kmod/tests/test_companion_gate_host
 staging/
 
 **/*.rs.bk

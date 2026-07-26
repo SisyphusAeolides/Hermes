@@ -24,6 +24,10 @@ module body Hermes.DropIn is
         return SmiView(devices => devices);
     end;
 
+    function catalogSize(): Nat32 is
+        return 17;
+    end;
+
     function closeSession(s: Session): Unit is
         let { online: Bool, devices: Nat32 } := s;
         let _o: Bool := online;

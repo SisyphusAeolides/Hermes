@@ -99,6 +99,121 @@ pub const MODULE_SURFACES: &[ModuleSurface] = &[
     },
 ];
 
+/// One advertised proprietary-named drop-in surface.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DropInSurface {
+    pub kind: &'static str,
+    pub name: &'static str,
+    pub hermes_crate: &'static str,
+}
+
+/// Complete catalog of Hermes' advertised open-stack NVIDIA drop-in names.
+pub const DROP_IN_CATALOG: &[DropInSurface] = &[
+    DropInSurface {
+        kind: "kmod",
+        name: modules::NVIDIA,
+        hermes_crate: "linux/kmod",
+    },
+    DropInSurface {
+        kind: "kmod",
+        name: modules::NVIDIA_MODESET,
+        hermes_crate: "linux/kmod",
+    },
+    DropInSurface {
+        kind: "kmod",
+        name: modules::NVIDIA_UVM,
+        hermes_crate: "linux/kmod",
+    },
+    DropInSurface {
+        kind: "kmod",
+        name: modules::NVIDIA_DRM,
+        hermes_crate: "linux/kmod",
+    },
+    DropInSurface {
+        kind: "kmod",
+        name: modules::NVIDIA_PEERMEM,
+        hermes_crate: "linux/kmod",
+    },
+    DropInSurface {
+        kind: "device",
+        name: devices::NVIDIA_CTL,
+        hermes_crate: "linux/kmod",
+    },
+    DropInSurface {
+        kind: "device",
+        name: devices::NVIDIA_0,
+        hermes_crate: "linux/kmod",
+    },
+    DropInSurface {
+        kind: "device",
+        name: devices::NVIDIA_UVM,
+        hermes_crate: "linux/kmod",
+    },
+    DropInSurface {
+        kind: "device",
+        name: devices::NVIDIA_MODESET,
+        hermes_crate: "linux/kmod",
+    },
+    DropInSurface {
+        kind: "device",
+        name: "/dev/nvidia-drm",
+        hermes_crate: "linux/kmod",
+    },
+    DropInSurface {
+        kind: "bin",
+        name: userspace::NVIDIA_SMI,
+        hermes_crate: "hermes-ctl",
+    },
+    DropInSurface {
+        kind: "bin",
+        name: userspace::NVIDIA_SETTINGS,
+        hermes_crate: "hermes-settings",
+    },
+    DropInSurface {
+        kind: "lib",
+        name: userspace::LIB_NVIDIA_ML,
+        hermes_crate: "hermes-nvml",
+    },
+    DropInSurface {
+        kind: "lib",
+        name: userspace::LIB_CUDA,
+        hermes_crate: "hermes-cuda",
+    },
+    DropInSurface {
+        kind: "lib",
+        name: userspace::LIB_GLX_NVIDIA,
+        hermes_crate: "hermes-mesa",
+    },
+    DropInSurface {
+        kind: "surface",
+        name: "DRM/KMS atomic",
+        hermes_crate: "hermes-drm",
+    },
+    DropInSurface {
+        kind: "surface",
+        name: "Mesa Vulkan/GL",
+        hermes_crate: "hermes-mesa",
+    },
+];
+
+/// Number of catalog entries (kmod + device + bin + lib + surface).
+pub fn drop_in_catalog_len() -> usize {
+    DROP_IN_CATALOG.len()
+}
+
+/// True when every classic open-gpu-kernel-modules module name is catalogued.
+pub fn drop_in_has_all_kmod_names() -> bool {
+    for m in modules::ALL_NVIDIA_SET {
+        if !DROP_IN_CATALOG
+            .iter()
+            .any(|s| s.kind == "kmod" && s.name == *m)
+        {
+            return false;
+        }
+    }
+    true
+}
+
 /// Runtime view of one GPU under the Linux personality.
 #[derive(Clone, Debug)]
 pub struct LinuxGpuSlot {
@@ -192,6 +307,29 @@ mod tests {
         }
         // Classic NVIDIA names are first-class module surfaces.
         assert_eq!(MODULE_SURFACES[0].name, "nvidia");
+    }
+
+    #[test]
+    fn drop_in_catalog_covers_advertised_stack() {
+        assert!(drop_in_catalog_len() >= 15);
+        assert!(drop_in_has_all_kmod_names());
+        assert!(DROP_IN_CATALOG
+            .iter()
+            .any(|s| s.name == userspace::NVIDIA_SMI));
+        assert!(DROP_IN_CATALOG
+            .iter()
+            .any(|s| s.name == userspace::NVIDIA_SETTINGS));
+        assert!(DROP_IN_CATALOG
+            .iter()
+            .any(|s| s.name == userspace::LIB_CUDA));
+        assert!(DROP_IN_CATALOG
+            .iter()
+            .any(|s| s.name == devices::NVIDIA_CTL));
+        assert!(DROP_IN_CATALOG.iter().any(|s| s.name == "/dev/nvidia-drm"));
+        let kinds: alloc::vec::Vec<_> = DROP_IN_CATALOG.iter().map(|s| s.kind).collect();
+        for need in ["kmod", "device", "bin", "lib", "surface"] {
+            assert!(kinds.contains(&need), "missing kind {need}");
+        }
     }
 
     #[test]

@@ -37,3 +37,12 @@ public export
 processListLegal : SessionPhase -> Bool
 processListLegal Online = True
 processListLegal Offline = False
+
+||| Advertised open-stack drop-in kinds Hermes covers.
+public export
+dropInKinds : Nat
+dropInKinds = 5  -- kmod, device, bin, lib, surface
+
+public export
+kmodNames : Nat
+kmodNames = 5  -- nvidia, modeset, uvm, drm, peermem

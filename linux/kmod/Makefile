@@ -32,8 +32,11 @@ host-test:
 	$(CC) -std=c11 -Wall -Wextra -O2 -DHERMES_HOST_TEST \
 		-I. -Iinclude \
 		tests/test_ctl_status_host.c -o tests/test_ctl_status_host
+	$(CC) -std=c11 -Wall -Wextra -O2 \
+		tests/test_companion_gate_host.c -o tests/test_companion_gate_host
 	./tests/test_bringup_host
 	./tests/test_drm_host
 	./tests/test_ctl_status_host
+	./tests/test_companion_gate_host
 
 .PHONY: all clean host-test

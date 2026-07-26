@@ -40,3 +40,9 @@ sessionSurfaces = suc (suc (suc (suc zero)))
 processListLegal : SessionPhase -> Bool
 processListLegal online = true
 processListLegal offline = false
+
+dropInKinds : Nat
+dropInKinds = suc (suc (suc (suc (suc zero))))
+
+kmodNames : Nat
+kmodNames = suc (suc (suc (suc (suc zero))))

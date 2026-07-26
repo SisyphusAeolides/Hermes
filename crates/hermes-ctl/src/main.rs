@@ -18,7 +18,8 @@ use hermes_gsp::{
 };
 use hermes_core::HermesPlatform;
 use hermes_linux::{
-    MODULE_SURFACES, SimPlatform, linux_bringup, modules, sim_full_hardware,
+    drop_in_catalog_len, drop_in_has_all_kmod_names, linux_bringup, modules, sim_full_hardware,
+    DROP_IN_CATALOG, MODULE_SURFACES, SimPlatform,
 };
 use hermes_nouveau::{
     comparison_matrix, plan_gsp_load, hermes_exclusive_count, NouveauChip,
@@ -108,10 +109,12 @@ fn main() {
             smi_smoke(&mode);
         }
         Some("session-promote") => session_promote_cmd(),
+        Some("dropin-complete") => dropin_complete_cmd(),
+        Some("dropin-catalog") => dropin_catalog_cmd(),
         _ => {
             println!("hermes-ctl — Hermes GSP control\n");
             println!(
-                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online|deep> | drm-smoke <offline|online|dual|gem> | mesa-smoke <offline|online|gem> | stack-smoke | icd-json | silicon-probe [fwroot] | host-bar | mailbox-smoke | silicon-bringup <sim|live-fw|fail-mailbox|host-block> | session-smoke | session-promote | smi-smoke <host|online>"
+                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online|deep> | drm-smoke <offline|online|dual|gem> | mesa-smoke <offline|online|gem> | stack-smoke | icd-json | silicon-probe [fwroot] | host-bar | mailbox-smoke | silicon-bringup <sim|live-fw|fail-mailbox|host-block> | session-smoke | session-promote | smi-smoke <host|online> | dropin-catalog | dropin-complete"
             );
         }
     }
@@ -1022,5 +1025,101 @@ fn session_promote_cmd() {
     }
     let _ = nvmlShutdown();
     println!("PASS");
+}
+
+fn dropin_catalog_cmd() {
+    println!(
+        "Hermes drop-in catalog: {} surfaces (kmod complete={})",
+        drop_in_catalog_len(),
+        drop_in_has_all_kmod_names()
+    );
+    println!("{:<10} {:<28} {}", "kind", "name", "crate");
+    for s in DROP_IN_CATALOG {
+        println!("{:<10} {:<28} {}", s.kind, s.name, s.hermes_crate);
+    }
+    if !drop_in_has_all_kmod_names() || drop_in_catalog_len() < 15 {
+        eprintln!("error: catalog incomplete");
+        std::process::exit(1);
+    }
+    println!("PASS");
+}
+
+/// Full advertised drop-in contract smoke: catalog + incomplete offline + session promote + multi-surface.
+fn dropin_complete_cmd() {
+    println!("=== dropin-complete: advertised NVIDIA open-stack drop-in contract ===");
+
+    // 1) Catalog covers all classic module names + userspace surfaces.
+    dropin_catalog_cmd();
+
+    // 2) Incomplete evidence never Online on shared sequencer.
+    {
+        let payload = b"dropin-complete-incomplete";
+        let digest = sha256_bytes(payload);
+        let manifest = NvidiaGspFirmwareManifest::new(
+            FirmwareFamily::Tu10x,
+            firmware_version(610, 43, 3),
+            payload.len() as u32,
+            digest,
+        );
+        let auth = NvidiaGspFirmwareAuthority::new(core::slice::from_ref(&manifest));
+        let identity = pci_identity(NVIDIA_VENDOR_ID, 0x1fb9, 0x03, 0x00);
+        let plat = SimPlatform::new();
+        let mut req = BringupRequest::with_defaults(identity, payload, auth);
+        req.hardware = HardwareEvidence::none();
+        let report = linux_bringup(&plat, &req);
+        println!(
+            "incomplete bringup: online={} phase={}",
+            report.is_online(),
+            report.phase().label()
+        );
+        if report.is_online() {
+            eprintln!("error: incomplete evidence must not Online");
+            std::process::exit(1);
+        }
+    }
+
+    // 3) Session promote binds NVML + CUDA + Mesa together.
+    session_promote_cmd();
+
+    // 4) CUDA offline still rejects when GSP token cleared.
+    hermes_cuda::hermes_cuda_reset();
+    assert_eq!(
+        hermes_cuda::cuInit(0),
+        CUDA_ERROR_HERMES_GSP_OFFLINE
+    );
+    println!("cuda offline after reset: PASS");
+
+    // 5) Re-promote and prove smi + settings surfaces see devices.
+    smi_smoke("online");
+    use nvidia_ml::{
+        hermes_nvml_discover_host_gpus, hermes_nvml_gpu_count, hermes_nvml_reset,
+        hermes_nvml_session_promote_online, nvmlInit_v2, nvmlShutdown, NVML_SUCCESS,
+    };
+    hermes_nvml_reset();
+    assert_eq!(nvmlInit_v2(), NVML_SUCCESS);
+    let discovered = hermes_nvml_discover_host_gpus();
+    println!("host discover for settings path: {discovered}");
+    if hermes_nvml_gpu_count() == 0 {
+        eprintln!("error: host Turing+ must appear for drop-in complete");
+        std::process::exit(1);
+    }
+    let _ = hermes_nvml_session_promote_online();
+    let _ = nvmlShutdown();
+
+    // 6) DRM/Mesa after session online.
+    hermes_mesa::hermes_mesa_set_gsp_online(true);
+    if hermes_mesa::hermes_present_solid_frame().is_err() {
+        eprintln!("error: mesa present failed under Online");
+        std::process::exit(1);
+    }
+    drm_smoke("online");
+
+    // 7) Module name list matches open-gpu-kernel-modules set.
+    assert_eq!(modules::ALL_NVIDIA_SET.len(), 5);
+    for m in modules::ALL_NVIDIA_SET {
+        println!("kmod name ok: {m}");
+    }
+
+    println!("dropin-complete: PASS (catalog + gates + multi-surface session)");
 }
 

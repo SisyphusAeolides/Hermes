@@ -73,4 +73,7 @@ void hermes_gsp_set_state(bool online, enum hermes_phase phase);
 int hermes_chardev_init(void);
 void hermes_chardev_exit(void);
 
+/* Peermem companion: registration authorized only when GSP Online. */
+bool hermes_peermem_register_ok(void);
+
 #endif /* HERMES_KMOD_H */

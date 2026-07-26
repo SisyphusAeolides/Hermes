@@ -1,7 +1,14 @@
 # Drop-in compatibility
 
 Hermes targets the same operator-facing names as
-[open-gpu-kernel-modules](https://github.com/NVIDIA/open-gpu-kernel-modules):
+[open-gpu-kernel-modules](https://github.com/NVIDIA/open-gpu-kernel-modules).
+
+Full catalog (source of truth in `hermes_linux::DROP_IN_CATALOG`):
+
+```sh
+cargo run -p hermes-ctl --bin hermes-ctl -- dropin-catalog
+cargo run -p hermes-ctl --bin hermes-ctl -- dropin-complete
+```
 
 | Component | Role |
 |---|---|
