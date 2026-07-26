@@ -25,7 +25,7 @@ edition = "2021"
 license = "MIT"
 rust-version = "1.85"
 authors = ["SisyphusAeolides <SisyphusAeolides@pm.me>"]
-repository = "https://github.com/SisyphusAeolides/hermes"
+repository = "https://github.com/SisyphusAeolides/Hermes"
 
 [workspace.dependencies]
 hermes-abi = { path = "crates/hermes-abi" }
