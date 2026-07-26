@@ -17,6 +17,7 @@ pub mod layout;
 pub mod mailbox;
 pub mod regs;
 pub mod session;
+pub mod stage;
 pub mod wpr;
 
 pub use bootstrap::{
@@ -24,7 +25,11 @@ pub use bootstrap::{
     T1000_TU117_BOOTSTRAP_610_43_03,
 };
 pub use bringup::{
-    BringupFault, BringupReport, BringupRequest, HardwareEvidence, run_bringup,
+    sample_turing_boot_offsets, sample_turing_wpr_framebuffer, BringupFault, BringupReport,
+    BringupRequest, HardwareEvidence, run_bringup,
+};
+pub use stage::{
+    stage_gsp_rm_image, stage_matches_admit, StageError, StageReport, STAGE_CHUNK_BYTES,
 };
 pub use elf_gsp::{fwversion_bytes, parse_gsp_rm_elf, GspElfEvidence};
 pub use firmware::{

@@ -8,11 +8,12 @@ use hermes_core::{
     nvidia_architecture, pci_identity,
 };
 use hermes_gsp::{
-    boot_handshake, BringupRequest, FirmwareFamily, HardwareEvidence, NVIDIA_GSP_RM_610_43_02,
-    NVIDIA_GSP_RM_610_43_03, NVIDIA_GSP_RM_DEFAULT_ALLOW_LIST, NvidiaGspFirmwareAuthority,
-    NvidiaGspFirmwareManifest, chip_gsp_relative, default_negotiated_features, drive_full_success,
-    firmware_family_for_device, firmware_version, openrm_gsp_relative, parse_gsp_rm_elf,
-    plan_activation, sha256_bytes, NvidiaChipDir, fwversion_bytes,
+    boot_handshake, sample_turing_boot_offsets, sample_turing_wpr_framebuffer, BringupRequest,
+    FirmwareFamily, HardwareEvidence, NVIDIA_GSP_RM_610_43_02, NVIDIA_GSP_RM_610_43_03,
+    NVIDIA_GSP_RM_DEFAULT_ALLOW_LIST, NvidiaGspFirmwareAuthority, NvidiaGspFirmwareManifest,
+    chip_gsp_relative, default_negotiated_features, drive_full_success, firmware_family_for_device,
+    firmware_version, openrm_gsp_relative, parse_gsp_rm_elf, plan_activation, sha256_bytes,
+    NvidiaChipDir, fwversion_bytes,
 };
 use hermes_core::HermesPlatform;
 use hermes_linux::{
@@ -95,10 +96,14 @@ fn main() {
             silicon::print_report(&report);
         }
         Some("mailbox-smoke") => mailbox_smoke(),
+        Some("silicon-bringup") => {
+            let mode = args.next().unwrap_or_else(|| "sim".into());
+            silicon_bringup_cmd(&mode);
+        }
         _ => {
             println!("hermes-ctl — Hermes GSP control\n");
             println!(
-                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online|deep> | drm-smoke <offline|online|dual|gem> | mesa-smoke <offline|online|gem> | stack-smoke | icd-json | silicon-probe [fwroot] | mailbox-smoke"
+                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online|deep> | drm-smoke <offline|online|dual|gem> | mesa-smoke <offline|online|gem> | stack-smoke | icd-json | silicon-probe [fwroot] | mailbox-smoke | silicon-bringup <sim|live-fw|fail-mailbox>"
             );
         }
     }
@@ -228,35 +233,31 @@ fn bringup_cmd(mode: &str) {
             bringup_cmd("ok");
         }
         "mailbox" => {
-            // Full evidence + Falcon HELLO/ACK on SimPlatform sparse BAR.
+            // Full evidence + live Falcon HELLO/ACK driven inside run_bringup.
             let plat = SimPlatform::new();
             plat.set_auto_mailbox_ack(true);
             let mut req = BringupRequest::with_defaults(identity, payload, auth);
             req.hardware = HardwareEvidence::full();
+            req.drive_mailbox = true;
             let report = linux_bringup(&plat, &req);
             println!(
-                "bringup mailbox-sim: online={} phase={} writes={}",
+                "bringup mailbox-sim: online={} phase={} writes={} staged={:?}",
                 report.is_online(),
                 report.phase().label(),
-                plat.write32_calls()
+                plat.write32_calls(),
+                report.stage.map(|s| s.bytes_staged)
             );
-            // Explicit handshake on a fresh isolation.
             let plat2 = SimPlatform::new();
             plat2.set_auto_mailbox_ack(true);
-            let id = identity;
-            let domain = plat2.isolate_device(id).expect("iso");
+            let domain = plat2.isolate_device(identity).expect("iso");
             let bar = plat2.map_bar(domain, 0, 0x20_0000).expect("bar");
             let ev = boot_handshake(&plat2, bar, 16).expect("handshake");
             println!(
                 "falcon handshake: mailbox_ok={} ready_ok={} resp={:#x}",
                 ev.mailbox_ok, ev.ready_ok, ev.last_response
             );
-            if !ev.ready_ok {
-                eprintln!("error: expected ACK on auto-mailbox sim");
-                std::process::exit(1);
-            }
-            if !report.is_online() {
-                eprintln!("error: full evidence should Online");
+            if !ev.ready_ok || !report.is_online() {
+                eprintln!("error: mailbox path should Online with ACK");
                 std::process::exit(1);
             }
             println!("PASS");
@@ -270,6 +271,140 @@ fn bringup_cmd(mode: &str) {
 
 fn mailbox_smoke() {
     bringup_cmd("mailbox");
+}
+
+/// Silicon-class bring-up: multi-chunk stage + optional live GSP-RM from host.
+fn silicon_bringup_cmd(mode: &str) {
+    match mode {
+        "fail-mailbox" => {
+            let plat = SimPlatform::new();
+            // Claim full hardware but live mailbox has no ACK → Offline.
+            let payload = b"silicon-bringup-fail-mailbox-evidence";
+            let digest = sha256_bytes(payload);
+            let manifest = NvidiaGspFirmwareManifest::new(
+                FirmwareFamily::Tu10x,
+                firmware_version(610, 43, 3),
+                payload.len() as u32,
+                digest,
+            );
+            let auth = NvidiaGspFirmwareAuthority::new(core::slice::from_ref(&manifest));
+            let identity = pci_identity(NVIDIA_VENDOR_ID, 0x1fb9, 0x03, 0x00);
+            let mut req = BringupRequest::with_defaults(identity, payload, auth);
+            req.hardware = HardwareEvidence::full();
+            req.drive_mailbox = true;
+            let report = linux_bringup(&plat, &req);
+            println!(
+                "silicon-bringup fail-mailbox: online={} staged={} mb={:?}",
+                report.is_online(),
+                report.stage.map(|s| s.bytes_staged).unwrap_or(0),
+                report.mailbox
+            );
+            if report.is_online() {
+                eprintln!("error: fail-mailbox must stay Offline");
+                std::process::exit(1);
+            }
+            println!("PASS");
+        }
+        "sim" => {
+            let plat = SimPlatform::new();
+            plat.set_auto_mailbox_ack(true);
+            plat.set_sec2_success(true);
+            // Multi-chunk image to prove full-stage path.
+            let mut payload = vec![0u8; 12_000];
+            for (i, b) in payload.iter_mut().enumerate() {
+                *b = (i % 251) as u8;
+            }
+            let digest = sha256_bytes(&payload);
+            let manifest = NvidiaGspFirmwareManifest::new(
+                FirmwareFamily::Tu10x,
+                firmware_version(610, 43, 3),
+                payload.len() as u32,
+                digest,
+            );
+            let auth = NvidiaGspFirmwareAuthority::new(core::slice::from_ref(&manifest));
+            let identity = pci_identity(NVIDIA_VENDOR_ID, 0x1fb9, 0x03, 0x00);
+            let mut req = BringupRequest::with_defaults(identity, &payload, auth);
+            req.hardware = HardwareEvidence::full();
+            req.drive_mailbox = true;
+            let report = linux_bringup(&plat, &req);
+            let stage = report.stage.expect("stage");
+            println!(
+                "silicon-bringup sim: online={} phase={} bytes_staged={} chunks={} published={} mb_ok={}",
+                report.is_online(),
+                report.phase().label(),
+                stage.bytes_staged,
+                stage.chunks,
+                plat.bytes_published(),
+                report.mailbox.map(|m| m.ready_ok).unwrap_or(false)
+            );
+            if !report.is_online() || stage.bytes_staged != 12_000 || stage.chunks != 3 {
+                eprintln!("error: sim silicon-bringup failed fault={:?}", report.fault);
+                std::process::exit(1);
+            }
+            if plat.bytes_published() != 12_000 {
+                eprintln!("error: published byte count mismatch");
+                std::process::exit(1);
+            }
+            println!("PASS");
+        }
+        "live-fw" => {
+            // Load real host gsp_tu10x.bin, admit + full stage + mailbox (sim HAL).
+            // Still Offline without IOMMU on live GPU — here SimPlatform isolates.
+            let path = "/lib/firmware/nvidia/610.43.02/gsp_tu10x.bin";
+            let bytes = match std::fs::read(path) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("skip live-fw: cannot read {path}: {e}");
+                    println!("PASS (skipped — firmware absent)");
+                    return;
+                }
+            };
+            let auth = NvidiaGspFirmwareAuthority::default_allow_list();
+            let identity = pci_identity(NVIDIA_VENDOR_ID, 0x1fb9, 0x03, 0x00);
+            let plat = SimPlatform::new();
+            plat.set_auto_mailbox_ack(true);
+            plat.set_sec2_success(true);
+            let mut req = BringupRequest::with_defaults(identity, &bytes, auth);
+            req.hardware = HardwareEvidence::full();
+            req.drive_mailbox = true;
+            // WPR path requires exact 29_352_832 byte image — live file matches pin.
+            req.drive_wpr = true;
+            req.wpr_framebuffer = Some(sample_turing_wpr_framebuffer());
+            req.wpr_boot_offsets = Some(sample_turing_boot_offsets());
+            // Page-aligned boot binary IOVA distinct from last stage window.
+            req.gsp_boot_binary_address = Some(0x1_0200_0000);
+            let report = linux_bringup(&plat, &req);
+            let stage = report.stage.expect("stage");
+            println!(
+                "silicon-bringup live-fw: online={} bytes_staged={} chunks={} wpr_obs={} digest_ok={}",
+                report.is_online(),
+                stage.bytes_staged,
+                stage.chunks,
+                report.wpr_locked_observed,
+                stage.staged_sha256 == report.firmware.as_ref().map(|f| f.sha256).unwrap_or([0; 32])
+            );
+            if stage.bytes_staged != bytes.len() as u64 {
+                eprintln!("error: must stage entire GSP-RM image");
+                std::process::exit(1);
+            }
+            if !report.is_online() {
+                eprintln!(
+                    "error: sim+live-fw with full evidence should Online, fault={:?}",
+                    report.fault
+                );
+                std::process::exit(1);
+            }
+            if !report.wpr_locked_observed {
+                eprintln!("error: WPR path should observe lock");
+                std::process::exit(1);
+            }
+            println!("PASS");
+        }
+        other => {
+            eprintln!("use sim|live-fw|fail-mailbox, got {other}");
+            std::process::exit(2);
+        }
+    }
 }
 
 fn firmware_pin() {

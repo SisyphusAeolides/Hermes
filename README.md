@@ -117,17 +117,22 @@ sh scripts/stage-dropin.sh
 See [`docs/DRM_MESA.md`](docs/DRM_MESA.md). Atomic modeset, dumb GEM, page-flip,
 Vulkan ICD, and CUDA streams only succeed when GSP is Online; Offline is fail-closed.
 
-### Live silicon probe
+### Live silicon probe and full-image stage
 
 ```sh
 cargo run -p hermes-ctl --bin hermes-ctl -- silicon-probe /lib/firmware
 cargo run -p hermes-ctl --bin hermes-ctl -- mailbox-smoke
-cargo run -p hermes-ctl --bin hermes-ctl -- bringup mailbox
+cargo run -p hermes-ctl --bin hermes-ctl -- silicon-bringup fail-mailbox
+cargo run -p hermes-ctl --bin hermes-ctl -- silicon-bringup sim
+cargo run -p hermes-ctl --bin hermes-ctl -- silicon-bringup live-fw
 ```
 
-On this class of host, Hermes **admits** real `gsp_tu10x.bin` (SHA-256 pin) and
-enumerates the PCI GPU (e.g. T1000 `1fb9`). Online still requires IOMMU domain +
-WPR/mailbox/ready — `silicon-probe` never invents Online.
+`run_bringup` now **stages the entire GSP-RM image** (chunked DMA + staged
+SHA-256 must match admit), optionally drives Falcon mailbox and WPR/SEC2 paths,
+and ANDs live observations into evidence (never invents Online). `live-fw` loads
+real `/lib/firmware/nvidia/610.43.02/gsp_tu10x.bin` through the shared sequencer
+on SimPlatform. Host `silicon-probe` still reports `online_claimed: false` when
+IOMMU is missing or Nouveau owns the device.
 
 ## Drop-in install (Linux)
 

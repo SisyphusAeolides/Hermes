@@ -73,6 +73,9 @@ struct SimState {
     dma: [DmaRec; MAX_DMA],
     fail_isolation: bool,
     auto_mailbox_ack: bool,
+    /// After a write to MAILBOX0, force next reads of MAILBOX0 to 0 (SEC2 success).
+    sec2_success: bool,
+    bytes_published: u64,
 }
 
 /// Configurable platform used by unit tests and hermes-ctl bring-up probes.
@@ -146,6 +149,8 @@ impl SimPlatform {
                 dma,
                 fail_isolation: false,
                 auto_mailbox_ack: false,
+                sec2_success: false,
+                bytes_published: 0,
             }),
             next_domain: AtomicU32::new(1),
             next_mmio: AtomicU32::new(1),
@@ -171,6 +176,17 @@ impl SimPlatform {
         unsafe {
             (*self.state.get()).auto_mailbox_ack = enable;
         }
+    }
+
+    /// Model SEC2 Booter success: after MAILBOX0 write, reads return 0.
+    pub fn set_sec2_success(&self, enable: bool) {
+        unsafe {
+            (*self.state.get()).sec2_success = enable;
+        }
+    }
+
+    pub fn bytes_published(&self) -> u64 {
+        unsafe { (*self.state.get()).bytes_published }
     }
 
     pub fn isolate_calls(&self) -> u32 {
@@ -373,6 +389,11 @@ impl HermesPlatform for SimPlatform {
         if slot.auto_mailbox_ack && offset == MB0 && value == HELLO {
             sparse_write(slot, MB1, ACK)?;
         }
+        // SEC2 success: clear MAILBOX0 after a non-HELLO post so Booter complete sees 0.
+        let sec2 = st.sec2_success;
+        if sec2 && offset == MB0 && value != HELLO {
+            sparse_write(slot, MB0, 0)?;
+        }
         Ok(())
     }
 
@@ -484,6 +505,7 @@ impl HermesPlatform for SimPlatform {
         if end > slot.length {
             return Err(HermesFault::DmaAccess);
         }
+        st.bytes_published = st.bytes_published.saturating_add(length as u64);
         Ok(())
     }
 

@@ -331,4 +331,79 @@ mod tests {
         assert!(!report.is_online());
         assert_eq!(plat.isolate_calls(), 0);
     }
+
+    #[test]
+    fn full_image_stage_publishes_all_bytes() {
+        let plat = SimPlatform::new();
+        // Multi-chunk payload (9 KiB → 3×4 KiB staging windows).
+        let mut payload = alloc::vec![0u8; 9000];
+        for (i, b) in payload.iter_mut().enumerate() {
+            *b = (i % 199) as u8;
+        }
+        let digest = sha256_bytes(&payload);
+        let manifest = NvidiaGspFirmwareManifest::new(
+            FirmwareFamily::Tu10x,
+            firmware_version(610, 43, 3),
+            payload.len() as u32,
+            digest,
+        );
+        let auth = NvidiaGspFirmwareAuthority::new(core::slice::from_ref(&manifest));
+        let identity = pci_identity(NVIDIA_VENDOR_ID, 0x1fb9, 0x03, 0x00);
+        let mut req = BringupRequest::with_defaults(identity, &payload, auth);
+        req.hardware = HardwareEvidence::full();
+        let report = linux_bringup(&plat, &req);
+        assert!(report.is_online(), "fault={:?}", report.fault);
+        let stage = report.stage.expect("stage");
+        assert_eq!(stage.bytes_staged, 9000);
+        assert_eq!(stage.chunks, 3);
+        assert_eq!(stage.staged_sha256, digest);
+        assert_eq!(plat.bytes_published(), 9000);
+    }
+
+    #[test]
+    fn drive_mailbox_without_ack_never_online_even_if_hardware_claimed() {
+        let plat = SimPlatform::new();
+        // No auto_mailbox_ack — live observe must fail closed.
+        let payload = b"mailbox-live-fail-closed";
+        let digest = sha256_bytes(payload);
+        let manifest = NvidiaGspFirmwareManifest::new(
+            FirmwareFamily::Tu10x,
+            firmware_version(610, 43, 3),
+            payload.len() as u32,
+            digest,
+        );
+        let auth = NvidiaGspFirmwareAuthority::new(core::slice::from_ref(&manifest));
+        let identity = pci_identity(NVIDIA_VENDOR_ID, 0x1fb9, 0x03, 0x00);
+        let mut req = BringupRequest::with_defaults(identity, payload, auth);
+        req.hardware = HardwareEvidence::full();
+        req.drive_mailbox = true;
+        let report = linux_bringup(&plat, &req);
+        assert!(!report.is_online(), "must not invent Online without mailbox ACK");
+        assert!(report.mailbox.is_some());
+        assert!(!report.final_evidence.boot_mailbox_ok);
+    }
+
+    #[test]
+    fn drive_mailbox_with_ack_and_full_evidence_online() {
+        let plat = SimPlatform::new();
+        plat.set_auto_mailbox_ack(true);
+        let payload = b"mailbox-live-success-path";
+        let digest = sha256_bytes(payload);
+        let manifest = NvidiaGspFirmwareManifest::new(
+            FirmwareFamily::Tu10x,
+            firmware_version(610, 43, 3),
+            payload.len() as u32,
+            digest,
+        );
+        let auth = NvidiaGspFirmwareAuthority::new(core::slice::from_ref(&manifest));
+        let identity = pci_identity(NVIDIA_VENDOR_ID, 0x1fb9, 0x03, 0x00);
+        let mut req = BringupRequest::with_defaults(identity, payload, auth);
+        req.hardware = HardwareEvidence::full();
+        req.drive_mailbox = true;
+        let report = linux_bringup(&plat, &req);
+        assert!(report.is_online(), "fault={:?}", report.fault);
+        let mb = report.mailbox.expect("mailbox");
+        assert!(mb.mailbox_ok && mb.ready_ok);
+        assert!(report.final_evidence.boot_mailbox_ok);
+    }
 }
