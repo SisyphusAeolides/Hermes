@@ -14,6 +14,7 @@ pub mod bringup;
 pub mod elf_gsp;
 pub mod firmware;
 pub mod layout;
+pub mod mailbox;
 pub mod regs;
 pub mod session;
 pub mod wpr;
@@ -35,6 +36,10 @@ pub use firmware::sha256_bytes;
 pub use layout::{
     chip_for_architecture, chip_gsp_relative, openrm_gsp_basename, openrm_gsp_relative,
     BootstrapArtifactKind, NvidiaChipDir, TURING_BOOTSTRAP_KINDS,
+};
+pub use mailbox::{
+    boot_handshake, falcon_reset_pulse, rpc_post_u32, snapshot_mailbox, MailboxError,
+    MailboxEvidence, MailboxSequence, MailboxSnapshot, RPC_CMD_HELLO, RPC_RSP_ACK,
 };
 pub use session::{
     default_negotiated_features, drive_full_success, plan_activation, ActivationPlan,

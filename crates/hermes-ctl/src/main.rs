@@ -1,17 +1,20 @@
 //! Hermes GSP control and host inspection.
 //! Reports phase from the real shared sequencer (never invents Online).
 
+mod silicon;
+
 use hermes_core::{
     HermesManifold, NVIDIA_VENDOR_ID, admit_display_device, is_nvidia_turing_or_newer,
     nvidia_architecture, pci_identity,
 };
 use hermes_gsp::{
-    BringupRequest, FirmwareFamily, HardwareEvidence, NVIDIA_GSP_RM_610_43_02,
+    boot_handshake, BringupRequest, FirmwareFamily, HardwareEvidence, NVIDIA_GSP_RM_610_43_02,
     NVIDIA_GSP_RM_610_43_03, NVIDIA_GSP_RM_DEFAULT_ALLOW_LIST, NvidiaGspFirmwareAuthority,
     NvidiaGspFirmwareManifest, chip_gsp_relative, default_negotiated_features, drive_full_success,
     firmware_family_for_device, firmware_version, openrm_gsp_relative, parse_gsp_rm_elf,
     plan_activation, sha256_bytes, NvidiaChipDir, fwversion_bytes,
 };
+use hermes_core::HermesPlatform;
 use hermes_linux::{
     MODULE_SURFACES, SimPlatform, linux_bringup, modules, sim_full_hardware,
 };
@@ -86,10 +89,16 @@ fn main() {
         Some("icd-json") => {
             print!("{}", hermes_vulkan_icd_json());
         }
+        Some("silicon-probe") => {
+            let root = args.next().unwrap_or_else(|| "/lib/firmware".into());
+            let report = silicon::probe_host(std::path::Path::new(&root));
+            silicon::print_report(&report);
+        }
+        Some("mailbox-smoke") => mailbox_smoke(),
         _ => {
             println!("hermes-ctl — Hermes GSP control\n");
             println!(
-                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online|deep> | drm-smoke <offline|online|dual|gem> | mesa-smoke <offline|online|gem> | stack-smoke | icd-json"
+                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online|deep> | drm-smoke <offline|online|dual|gem> | mesa-smoke <offline|online|gem> | stack-smoke | icd-json | silicon-probe [fwroot] | mailbox-smoke"
             );
         }
     }
@@ -218,11 +227,49 @@ fn bringup_cmd(mode: &str) {
             bringup_cmd("fail");
             bringup_cmd("ok");
         }
+        "mailbox" => {
+            // Full evidence + Falcon HELLO/ACK on SimPlatform sparse BAR.
+            let plat = SimPlatform::new();
+            plat.set_auto_mailbox_ack(true);
+            let mut req = BringupRequest::with_defaults(identity, payload, auth);
+            req.hardware = HardwareEvidence::full();
+            let report = linux_bringup(&plat, &req);
+            println!(
+                "bringup mailbox-sim: online={} phase={} writes={}",
+                report.is_online(),
+                report.phase().label(),
+                plat.write32_calls()
+            );
+            // Explicit handshake on a fresh isolation.
+            let plat2 = SimPlatform::new();
+            plat2.set_auto_mailbox_ack(true);
+            let id = identity;
+            let domain = plat2.isolate_device(id).expect("iso");
+            let bar = plat2.map_bar(domain, 0, 0x20_0000).expect("bar");
+            let ev = boot_handshake(&plat2, bar, 16).expect("handshake");
+            println!(
+                "falcon handshake: mailbox_ok={} ready_ok={} resp={:#x}",
+                ev.mailbox_ok, ev.ready_ok, ev.last_response
+            );
+            if !ev.ready_ok {
+                eprintln!("error: expected ACK on auto-mailbox sim");
+                std::process::exit(1);
+            }
+            if !report.is_online() {
+                eprintln!("error: full evidence should Online");
+                std::process::exit(1);
+            }
+            println!("PASS");
+        }
         other => {
-            eprintln!("unknown bringup mode: {other} (use fail|ok|both)");
+            eprintln!("unknown bringup mode: {other} (use fail|ok|both|mailbox)");
             std::process::exit(2);
         }
     }
+}
+
+fn mailbox_smoke() {
+    bringup_cmd("mailbox");
 }
 
 fn firmware_pin() {

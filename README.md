@@ -117,6 +117,18 @@ sh scripts/stage-dropin.sh
 See [`docs/DRM_MESA.md`](docs/DRM_MESA.md). Atomic modeset, dumb GEM, page-flip,
 Vulkan ICD, and CUDA streams only succeed when GSP is Online; Offline is fail-closed.
 
+### Live silicon probe
+
+```sh
+cargo run -p hermes-ctl --bin hermes-ctl -- silicon-probe /lib/firmware
+cargo run -p hermes-ctl --bin hermes-ctl -- mailbox-smoke
+cargo run -p hermes-ctl --bin hermes-ctl -- bringup mailbox
+```
+
+On this class of host, Hermes **admits** real `gsp_tu10x.bin` (SHA-256 pin) and
+enumerates the PCI GPU (e.g. T1000 `1fb9`). Online still requires IOMMU domain +
+WPR/mailbox/ready — `silicon-probe` never invents Online.
+
 ## Drop-in install (Linux)
 
 After building:

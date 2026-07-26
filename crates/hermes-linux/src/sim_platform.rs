@@ -21,7 +21,10 @@ pub type SimDma = u32;
 const MAX_DOMAINS: usize = 8;
 const MAX_MMIO: usize = 16;
 const MAX_DMA: usize = 16;
-const BAR_WORDS: usize = 1024;
+/// Sparse MMIO slots — GSP Falcon mailboxes sit near 0x11_0040, far past 4 KiB.
+const SPARSE_MMIO: usize = 128;
+/// Simulated BAR0 window large enough for published GSP register block.
+const BAR0_LENGTH: u64 = 0x20_0000;
 const DMA_CAP: usize = 4096;
 
 #[derive(Clone, Copy)]
@@ -32,6 +35,13 @@ struct DomainRec {
 }
 
 #[derive(Clone, Copy)]
+struct SparseWord {
+    live: bool,
+    offset: u32,
+    value: u32,
+}
+
+#[derive(Clone, Copy)]
 struct MmioRec {
     live: bool,
     #[allow(dead_code)]
@@ -39,7 +49,9 @@ struct MmioRec {
     #[allow(dead_code)]
     bar: u8,
     length: u64,
-    words: [u32; BAR_WORDS],
+    sparse: [SparseWord; SPARSE_MMIO],
+    /// When true, HELLO cmd on MAILBOX0 auto-fills ACK on MAILBOX1 (silicon sim).
+    auto_mailbox_ack: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -60,6 +72,7 @@ struct SimState {
     mmio: [MmioRec; MAX_MMIO],
     dma: [DmaRec; MAX_DMA],
     fail_isolation: bool,
+    auto_mailbox_ack: bool,
 }
 
 /// Configurable platform used by unit tests and hermes-ctl bring-up probes.
@@ -111,7 +124,12 @@ impl SimPlatform {
             domain: 0,
             bar: 0,
             length: 0,
-            words: [0; BAR_WORDS],
+            sparse: [SparseWord {
+                live: false,
+                offset: 0,
+                value: 0,
+            }; SPARSE_MMIO],
+            auto_mailbox_ack: false,
         }; MAX_MMIO];
         let dma = [DmaRec {
             live: false,
@@ -127,6 +145,7 @@ impl SimPlatform {
                 mmio,
                 dma,
                 fail_isolation: false,
+                auto_mailbox_ack: false,
             }),
             next_domain: AtomicU32::new(1),
             next_mmio: AtomicU32::new(1),
@@ -144,6 +163,13 @@ impl SimPlatform {
         // Safety: single-threaded test contract.
         unsafe {
             (*self.state.get()).fail_isolation = fail;
+        }
+    }
+
+    /// Enable Falcon MAILBOX0 HELLO → MAILBOX1 ACK auto-response (silicon sim).
+    pub fn set_auto_mailbox_ack(&self, enable: bool) {
+        unsafe {
+            (*self.state.get()).auto_mailbox_ack = enable;
         }
     }
 
@@ -192,6 +218,26 @@ impl SimPlatform {
         }
         Ok((handle as usize) - 1)
     }
+}
+
+fn sparse_write(slot: &mut MmioRec, offset: u32, value: u32) -> Result<(), HermesFault> {
+    for e in &mut slot.sparse {
+        if e.live && e.offset == offset {
+            e.value = value;
+            return Ok(());
+        }
+    }
+    for e in &mut slot.sparse {
+        if !e.live {
+            *e = SparseWord {
+                live: true,
+                offset,
+                value,
+            };
+            return Ok(());
+        }
+    }
+    Err(HermesFault::MmioWrite)
 }
 
 impl HermesPlatform for SimPlatform {
@@ -245,24 +291,31 @@ impl HermesPlatform for SimPlatform {
         if bar > 5 {
             return Err(HermesFault::BarUnavailable);
         }
-        let length = core::cmp::max(minimum_length, 4096);
-        if length as usize > BAR_WORDS * 4 {
-            return Err(HermesFault::BarUnavailable);
-        }
+        let length = core::cmp::max(minimum_length, BAR0_LENGTH);
         let id = self.next_mmio.fetch_add(1, Ordering::Relaxed);
         if id as usize > MAX_MMIO {
             return Err(HermesFault::BarUnavailable);
         }
         let idx = (id as usize) - 1;
+        let auto = st.auto_mailbox_ack;
         st.mmio[idx] = MmioRec {
             live: true,
             domain,
             bar,
             length,
-            words: [0; BAR_WORDS],
+            sparse: [SparseWord {
+                live: false,
+                offset: 0,
+                value: 0,
+            }; SPARSE_MMIO],
+            auto_mailbox_ack: auto,
         };
-        // Synthetic "device ready" status word used by bring-up smoke.
-        st.mmio[idx].words[0] = 0x1;
+        // Synthetic "device ready" status word at offset 0 used by bring-up smoke.
+        st.mmio[idx].sparse[0] = SparseWord {
+            live: true,
+            offset: 0,
+            value: 0x1,
+        };
         Ok(MmioWindow {
             handle: id,
             bar,
@@ -287,11 +340,12 @@ impl HermesPlatform for SimPlatform {
         if offset as u64 + 4 > slot.length || offset % 4 != 0 {
             return Err(HermesFault::MmioOutOfRange);
         }
-        let word = (offset / 4) as usize;
-        if word >= BAR_WORDS {
-            return Err(HermesFault::MmioOutOfRange);
+        for e in &slot.sparse {
+            if e.live && e.offset == offset {
+                return Ok(e.value);
+            }
         }
-        Ok(slot.words[word])
+        Ok(0)
     }
 
     fn write32(
@@ -310,11 +364,15 @@ impl HermesPlatform for SimPlatform {
         if offset as u64 + 4 > slot.length || offset % 4 != 0 {
             return Err(HermesFault::MmioOutOfRange);
         }
-        let word = (offset / 4) as usize;
-        if word >= BAR_WORDS {
-            return Err(HermesFault::MmioOutOfRange);
+        sparse_write(slot, offset, value)?;
+        // Falcon HELLO auto-ack (MAILBOX0 @ 0x00110040, MAILBOX1 @ 0x00110044).
+        const MB0: u32 = 0x0011_0040;
+        const MB1: u32 = 0x0011_0044;
+        const HELLO: u32 = 0x4845_4c4c;
+        const ACK: u32 = 0x4143_4b21;
+        if slot.auto_mailbox_ack && offset == MB0 && value == HELLO {
+            sparse_write(slot, MB1, ACK)?;
         }
-        slot.words[word] = value;
         Ok(())
     }
 

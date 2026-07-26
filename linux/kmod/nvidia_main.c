@@ -119,9 +119,15 @@ static int __init hermes_nvidia_init(void)
 
 	pr_info("hermes/nvidia: loading Hermes GSP surface (fail-closed)\n");
 	hermes_gsp_set_state(false, HERMES_PHASE_OFFLINE);
+	err = hermes_chardev_init();
+	if (err) {
+		pr_err("hermes/nvidia: chardev_init failed: %d\n", err);
+		return err;
+	}
 	err = pci_register_driver(&hermes_pci_driver);
 	if (err) {
 		pr_err("hermes/nvidia: pci_register_driver failed: %d\n", err);
+		hermes_chardev_exit();
 		return err;
 	}
 	pr_info("hermes/nvidia: registered; phase=%s online=%d\n",
@@ -132,6 +138,7 @@ static int __init hermes_nvidia_init(void)
 static void __exit hermes_nvidia_exit(void)
 {
 	pci_unregister_driver(&hermes_pci_driver);
+	hermes_chardev_exit();
 	hermes_gsp_set_state(false, HERMES_PHASE_OFFLINE);
 	pr_info("hermes/nvidia: unloaded\n");
 }

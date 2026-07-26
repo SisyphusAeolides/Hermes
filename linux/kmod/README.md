@@ -26,6 +26,7 @@ Requires `/lib/modules/$(uname -r)/build` kernel headers for `make`.
 - Bring-up calls `hermes_run_bringup()` (same gate order as `hermes_gsp::run_bringup`).
 - **Online is never claimed** unless firmware measured + IOMMU domain + WPR + mailbox + ready are all true.
 - `hermes_gsp_is_online()` / `hermes_gsp_phase()` exported for companion modules.
+- `nvidia` creates **`/dev/nvidiactl`** and **`/dev/nvidia0`** (status ioctl/read; fail-closed Online).
 - `nvidia-drm` registers misc device **`/dev/nvidia-drm`** with GSP-gated ioctls
   (`STATUS`, `DUMB_CREATE`, `ATOMIC`, `DISABLE_CRTC`) — see `include/hermes_drm_uapi.h`.
 - `nvidia-modeset` logs Online state and refuses authority while Offline.

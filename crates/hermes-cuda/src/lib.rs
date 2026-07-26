@@ -501,11 +501,57 @@ pub extern "C" fn cuMemsetD8_v2(dst: u64, value: u8, n: usize) -> CudaResult {
     })
 }
 
+/// Classify a module image without executing it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ModuleImageKind {
+    /// Hermes test image (empty or non-magic) — allowed for software launch shell.
+    HermesStub,
+    /// CUDA fatbinary magic `0xBA55ED50` (little-endian first u32).
+    Fatbin,
+    /// ELF cubin (`\x7fELF`).
+    CubinElf,
+    /// ASCII PTX starting with `.version` or `//`.
+    PtxText,
+    Unknown,
+}
+
+pub fn classify_module_image(image: &[u8]) -> ModuleImageKind {
+    if image.is_empty() {
+        return ModuleImageKind::HermesStub;
+    }
+    if image.len() >= 4 {
+        let mag = u32::from_le_bytes([image[0], image[1], image[2], image[3]]);
+        if mag == 0xBA55_ED50 {
+            return ModuleImageKind::Fatbin;
+        }
+        if image.starts_with(&[0x7f, b'E', b'L', b'F']) {
+            return ModuleImageKind::CubinElf;
+        }
+    }
+    let head = core::str::from_utf8(&image[..image.len().min(64)]).unwrap_or("");
+    if head.contains(".version") || head.trim_start().starts_with("//") {
+        return ModuleImageKind::PtxText;
+    }
+    // Single NUL used by unit tests as stub.
+    if image == [0] {
+        return ModuleImageKind::HermesStub;
+    }
+    ModuleImageKind::Unknown
+}
+
 #[no_mangle]
 pub extern "C" fn cuModuleLoadData(module: *mut u64, image: *const u8) -> CudaResult {
     if module.is_null() || image.is_null() {
         return CUDA_ERROR_INVALID_VALUE;
     }
+    // Peek up to 256 bytes for magic (host pointer lifetime is caller's).
+    let peek = unsafe { core::slice::from_raw_parts(image, 256) };
+    // Find actual length only for NUL-terminated stubs; fatbin needs real size API later.
+    let kind = if peek[0] == 0 {
+        ModuleImageKind::HermesStub
+    } else {
+        classify_module_image(peek)
+    };
     with_state(|s| {
         let g = require_gsp(s);
         if g != CUDA_SUCCESS {
@@ -515,12 +561,23 @@ pub extern "C" fn cuModuleLoadData(module: *mut u64, image: *const u8) -> CudaRe
             Ok(c) => c,
             Err(e) => return e,
         };
+        // Unknown blobs rejected — no silent accept of garbage as "loaded".
+        if matches!(kind, ModuleImageKind::Unknown) {
+            return CUDA_ERROR_NOT_SUPPORTED;
+        }
         let id = next_id(s);
+        let name = match kind {
+            ModuleImageKind::Fatbin => "fatbin",
+            ModuleImageKind::CubinElf => "cubin",
+            ModuleImageKind::PtxText => "ptx",
+            ModuleImageKind::HermesStub => "stub",
+            ModuleImageKind::Unknown => "unknown",
+        };
         s.modules.push(Module {
             id,
             ctx,
-            name: "module".into(),
-            // Default export so GetFunction can resolve a kernel without real cubin.
+            name: name.into(),
+            // Default export so GetFunction can resolve a kernel without real SM.
             functions: vec!["hermes_kernel".into(), "main".into()],
         });
         unsafe {
@@ -961,5 +1018,18 @@ mod tests {
         hermes_cuda_reset();
         let mut s = 0u64;
         assert_eq!(cuStreamCreate(&mut s, 0), CUDA_ERROR_HERMES_GSP_OFFLINE);
+    }
+
+    #[test]
+    fn classifies_fatbin_and_ptx() {
+        let fat = 0xBA55_ED50u32.to_le_bytes();
+        assert_eq!(classify_module_image(&fat), ModuleImageKind::Fatbin);
+        let ptx = b".version 7.0\n.target sm_75\n";
+        assert_eq!(classify_module_image(ptx), ModuleImageKind::PtxText);
+        assert_eq!(
+            classify_module_image(b"\x7fELF...."),
+            ModuleImageKind::CubinElf
+        );
+        assert_eq!(classify_module_image(b"garbage!!"), ModuleImageKind::Unknown);
     }
 }
