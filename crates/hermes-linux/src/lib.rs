@@ -406,4 +406,60 @@ mod tests {
         assert!(mb.mailbox_ok && mb.ready_ok);
         assert!(report.final_evidence.boot_mailbox_ok);
     }
+
+    #[test]
+    fn host_facts_nouveau_preflight_never_online() {
+        use hermes_gsp::{facts_from_sysfs, run_bringup};
+        let plat = SimPlatform::new();
+        let payload = b"host-preflight-nouveau";
+        let digest = sha256_bytes(payload);
+        let manifest = NvidiaGspFirmwareManifest::new(
+            FirmwareFamily::Tu10x,
+            firmware_version(610, 43, 3),
+            payload.len() as u32,
+            digest,
+        );
+        let auth = NvidiaGspFirmwareAuthority::new(core::slice::from_ref(&manifest));
+        let identity = pci_identity(NVIDIA_VENDOR_ID, 0x1fb9, 0x03, 0x00);
+        let mut req = BringupRequest::with_defaults(identity, payload, auth);
+        req.hardware = HardwareEvidence::full();
+        // Live host shape: Nouveau + no IOMMU.
+        req.host_facts = Some(facts_from_sysfs(None, Some("nouveau"), true, false));
+        let report = run_bringup(&plat, &req);
+        assert!(!report.is_online());
+        assert_eq!(plat.isolate_calls(), 0, "must fail before isolation");
+        assert!(matches!(
+            report.fault,
+            Some(hermes_gsp::BringupFault::Hermes(
+                hermes_core::HermesFault::DeviceIsolation
+            ))
+        ));
+    }
+
+    #[test]
+    fn retain_on_online_keeps_domain_until_release() {
+        use hermes_gsp::run_bringup_ex;
+        let plat = SimPlatform::new();
+        let payload = b"retain-session-resources";
+        let digest = sha256_bytes(payload);
+        let manifest = NvidiaGspFirmwareManifest::new(
+            FirmwareFamily::Tu10x,
+            firmware_version(610, 43, 3),
+            payload.len() as u32,
+            digest,
+        );
+        let auth = NvidiaGspFirmwareAuthority::new(core::slice::from_ref(&manifest));
+        let identity = pci_identity(NVIDIA_VENDOR_ID, 0x1fb9, 0x03, 0x00);
+        let mut req = BringupRequest::with_defaults(identity, payload, auth);
+        req.hardware = HardwareEvidence::full();
+        req.retain_on_online = true;
+        let outcome = run_bringup_ex(&plat, &req);
+        assert!(outcome.report.is_online(), "fault={:?}", outcome.report.fault);
+        assert!(outcome.report.resources_retained);
+        assert!(outcome.retained.is_some());
+        // Domain still live: second isolate still works (new domain).
+        let report = outcome.release(&plat);
+        assert!(report.is_online());
+        assert!(!report.resources_retained);
+    }
 }

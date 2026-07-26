@@ -8,12 +8,13 @@ use hermes_core::{
     nvidia_architecture, pci_identity,
 };
 use hermes_gsp::{
-    boot_handshake, sample_turing_boot_offsets, sample_turing_wpr_framebuffer, BringupRequest,
-    FirmwareFamily, HardwareEvidence, NVIDIA_GSP_RM_610_43_02, NVIDIA_GSP_RM_610_43_03,
-    NVIDIA_GSP_RM_DEFAULT_ALLOW_LIST, NvidiaGspFirmwareAuthority, NvidiaGspFirmwareManifest,
-    chip_gsp_relative, default_negotiated_features, drive_full_success, firmware_family_for_device,
-    firmware_version, openrm_gsp_relative, parse_gsp_rm_elf, plan_activation, sha256_bytes,
-    NvidiaChipDir, fwversion_bytes,
+    boot_handshake, facts_from_sysfs, run_bringup_ex, sample_turing_boot_offsets,
+    sample_turing_wpr_framebuffer, BringupRequest, FirmwareFamily, HardwareEvidence,
+    NVIDIA_GSP_RM_610_43_02, NVIDIA_GSP_RM_610_43_03, NVIDIA_GSP_RM_DEFAULT_ALLOW_LIST,
+    NvidiaGspFirmwareAuthority, NvidiaGspFirmwareManifest, chip_gsp_relative,
+    default_negotiated_features, drive_full_success, firmware_family_for_device, firmware_version,
+    openrm_gsp_relative, parse_gsp_rm_elf, plan_activation, sha256_bytes, NvidiaChipDir,
+    fwversion_bytes,
 };
 use hermes_core::HermesPlatform;
 use hermes_linux::{
@@ -95,15 +96,17 @@ fn main() {
             let report = silicon::probe_host(std::path::Path::new(&root));
             silicon::print_report(&report);
         }
+        Some("host-bar") => silicon::host_bar_smoke(),
         Some("mailbox-smoke") => mailbox_smoke(),
         Some("silicon-bringup") => {
             let mode = args.next().unwrap_or_else(|| "sim".into());
             silicon_bringup_cmd(&mode);
         }
+        Some("session-smoke") => session_smoke(),
         _ => {
             println!("hermes-ctl — Hermes GSP control\n");
             println!(
-                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online|deep> | drm-smoke <offline|online|dual|gem> | mesa-smoke <offline|online|gem> | stack-smoke | icd-json | silicon-probe [fwroot] | mailbox-smoke | silicon-bringup <sim|live-fw|fail-mailbox>"
+                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online|deep> | drm-smoke <offline|online|dual|gem> | mesa-smoke <offline|online|gem> | stack-smoke | icd-json | silicon-probe [fwroot] | host-bar | mailbox-smoke | silicon-bringup <sim|live-fw|fail-mailbox|host-block> | session-smoke"
             );
         }
     }
@@ -367,12 +370,12 @@ fn silicon_bringup_cmd(mode: &str) {
             let mut req = BringupRequest::with_defaults(identity, &bytes, auth);
             req.hardware = HardwareEvidence::full();
             req.drive_mailbox = true;
-            // WPR path requires exact 29_352_832 byte image — live file matches pin.
             req.drive_wpr = true;
             req.wpr_framebuffer = Some(sample_turing_wpr_framebuffer());
             req.wpr_boot_offsets = Some(sample_turing_boot_offsets());
-            // Page-aligned boot binary IOVA distinct from last stage window.
             req.gsp_boot_binary_address = Some(0x1_0200_0000);
+            // Sim host facts: isolated domain + mapped BAR (not live Nouveau).
+            req.host_facts = Some(hermes_gsp::HostDeviceFacts::sim_ready());
             let report = linux_bringup(&plat, &req);
             let stage = report.stage.expect("stage");
             println!(
@@ -400,11 +403,75 @@ fn silicon_bringup_cmd(mode: &str) {
             }
             println!("PASS");
         }
+        "host-block" => {
+            // Inject live-shaped host facts (Nouveau, no IOMMU) into shared sequencer.
+            let plat = SimPlatform::new();
+            let payload = b"silicon-bringup-host-block-nouveau";
+            let digest = sha256_bytes(payload);
+            let manifest = NvidiaGspFirmwareManifest::new(
+                FirmwareFamily::Tu10x,
+                firmware_version(610, 43, 3),
+                payload.len() as u32,
+                digest,
+            );
+            let auth = NvidiaGspFirmwareAuthority::new(core::slice::from_ref(&manifest));
+            let identity = pci_identity(NVIDIA_VENDOR_ID, 0x1fb9, 0x03, 0x00);
+            let mut req = BringupRequest::with_defaults(identity, payload, auth);
+            req.hardware = HardwareEvidence::full();
+            req.host_facts = Some(facts_from_sysfs(None, Some("nouveau"), true, false));
+            let report = linux_bringup(&plat, &req);
+            println!(
+                "silicon-bringup host-block: online={} fault={:?} isolate_calls={}",
+                report.is_online(),
+                report.fault,
+                plat.isolate_calls()
+            );
+            if report.is_online() || plat.isolate_calls() != 0 {
+                eprintln!("error: host-block must fail closed before isolation");
+                std::process::exit(1);
+            }
+            println!("PASS");
+        }
         other => {
-            eprintln!("use sim|live-fw|fail-mailbox, got {other}");
+            eprintln!("use sim|live-fw|fail-mailbox|host-block, got {other}");
             std::process::exit(2);
         }
     }
+}
+
+fn session_smoke() {
+    let plat = SimPlatform::new();
+    let payload = b"session-retain-smoke";
+    let digest = sha256_bytes(payload);
+    let manifest = NvidiaGspFirmwareManifest::new(
+        FirmwareFamily::Tu10x,
+        firmware_version(610, 43, 3),
+        payload.len() as u32,
+        digest,
+    );
+    let auth = NvidiaGspFirmwareAuthority::new(core::slice::from_ref(&manifest));
+    let identity = pci_identity(NVIDIA_VENDOR_ID, 0x1fb9, 0x03, 0x00);
+    let mut req = BringupRequest::with_defaults(identity, payload, auth);
+    req.hardware = HardwareEvidence::full();
+    req.retain_on_online = true;
+    let outcome = run_bringup_ex(&plat, &req);
+    println!(
+        "session-smoke: online={} retained={} has_resources={}",
+        outcome.report.is_online(),
+        outcome.report.resources_retained,
+        outcome.retained.is_some()
+    );
+    if !outcome.report.is_online() || outcome.retained.is_none() {
+        eprintln!("error: retain path must Online with resources");
+        std::process::exit(1);
+    }
+    let report = outcome.release(&plat);
+    println!(
+        "session-smoke after release: online={} retained_flag={}",
+        report.is_online(),
+        report.resources_retained
+    );
+    println!("PASS");
 }
 
 fn firmware_pin() {

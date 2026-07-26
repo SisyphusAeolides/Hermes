@@ -1,20 +1,21 @@
 //! Shared GSP bring-up sequencer.
 //!
-//! Walks Turing+ admission → measured GSP-RM (and optional T1000 bootstrap) →
-//! platform isolation/BAR/DMA full-image stage → optional live mailbox/WPR
-//! observation → fail-closed manifold gates. Online is returned only when every
-//! evidence token is present. Production kmod and hermes-ctl call this path.
+//! Walks Turing+ admission → optional host preflight → measured GSP-RM →
+//! platform isolation/BAR/DMA full-image stage → optional live mailbox/WPR →
+//! fail-closed manifold gates. Online only when every evidence token is present.
+//! Production kmod and hermes-ctl call this path.
 
 use hermes_abi::hermes::HermesPciIdentity;
 use hermes_core::{
-    AdmittedDevice, HermesFault, HermesManifold, HermesPhase, HermesPlatform, ManifoldFault,
-    admit_display_device,
+    admit_display_device, AdmittedDevice, DmaRegion, HermesFault, HermesManifold, HermesPhase,
+    HermesPlatform, ManifoldFault, MmioWindow,
 };
 
 use crate::bootstrap::{TuringGspBootstrapMaterial, VerifiedTuringGspBootstrap};
 use crate::firmware::{
-    NvidiaGspFirmwareAuthority, VerifiedFirmware, firmware_family_for_device,
+    firmware_family_for_device, NvidiaGspFirmwareAuthority, VerifiedFirmware,
 };
+use crate::host_gate::{host_preflight_fault, HostDeviceFacts};
 use crate::mailbox::{boot_handshake, MailboxEvidence};
 use crate::session::default_negotiated_features;
 use crate::stage::{stage_gsp_rm_image, stage_matches_admit, StageReport, STAGE_CHUNK_BYTES};
@@ -24,11 +25,6 @@ use crate::wpr::{
 };
 
 /// Hardware evidence that is not implied by PCI isolation alone.
-///
-/// The Linux platform (or sim) fills these after real WPR/mailbox/ready work.
-/// Leaving any false keeps Online unreachable. When `drive_mailbox` /
-/// `drive_wpr` are set, live observations **AND** with these flags — they can
-/// only tighten fail-closed, never invent success beyond what hardware shows.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct HardwareEvidence {
     pub wpr_locked: bool,
@@ -68,21 +64,19 @@ pub struct BringupRequest<'a> {
     pub generation: u32,
     pub gsp_rm_image: &'a [u8],
     pub firmware_authority: NvidiaGspFirmwareAuthority<'a>,
-    /// Required for Turing TU10x devices when the operator stages the five-file bundle.
     pub bootstrap: Option<TuringGspBootstrapMaterial<'a>>,
     pub require_bootstrap: bool,
     pub features: u64,
     pub hardware: HardwareEvidence,
-    /// After DMA stage, run Falcon HELLO handshake and AND into evidence.
     pub drive_mailbox: bool,
-    /// After stage, build WPR plan + SEC2 mailbox complete path (sim/host).
     pub drive_wpr: bool,
-    /// Optional framebuffer evidence for WPR plan (required if drive_wpr).
     pub wpr_framebuffer: Option<TuringFramebufferEvidence>,
-    /// Optional RISC-V boot offsets for WPR plan.
     pub wpr_boot_offsets: Option<TuringRiscvBootOffsets>,
-    /// Optional mapped boot-binary DMA address (page-aligned).
     pub gsp_boot_binary_address: Option<u64>,
+    /// Host IOMMU/driver/BAR facts; when set, preflighted fail-closed.
+    pub host_facts: Option<HostDeviceFacts>,
+    /// Keep domain/BAR/DMA live for the caller when Online.
+    pub retain_on_online: bool,
 }
 
 impl<'a> BringupRequest<'a> {
@@ -105,6 +99,8 @@ impl<'a> BringupRequest<'a> {
             wpr_framebuffer: None,
             wpr_boot_offsets: None,
             gsp_boot_binary_address: None,
+            host_facts: None,
+            retain_on_online: false,
         }
     }
 }
@@ -119,6 +115,7 @@ pub enum BringupFault {
     MailboxFailed,
     WprFailed,
     WprInputsMissing,
+    HostPreflight,
 }
 
 impl From<hermes_core::AdmissionError> for BringupFault {
@@ -152,6 +149,7 @@ pub struct BringupReport {
     pub mailbox: Option<MailboxEvidence>,
     pub wpr_locked_observed: bool,
     pub final_evidence: HardwareEvidence,
+    pub resources_retained: bool,
 }
 
 impl BringupReport {
@@ -164,23 +162,55 @@ impl BringupReport {
     }
 }
 
-/// Run the production bring-up path against any `HermesPlatform`.
-///
-/// Order is fixed and fail-closed:
-/// 1. admit display device (Turing+)
-/// 2. manifold probe
-/// 3. measure GSP-RM image (length+hash+ELF)
-/// 4. optional T1000 bootstrap bundle verify
-/// 5. isolate device (IOMMU domain)
-/// 6. map BAR0, **stage full image** via chunked DMA, verify staged digest
-/// 7. optional Falcon mailbox handshake (AND into evidence)
-/// 8. optional WPR plan + SEC2 complete (AND into evidence)
-/// 9. arm queues + negotiate features
-/// 10. ignite only with combined evidence
+/// Platform resources retained after a successful Online bring-up.
+pub struct RetainedResources<P: HermesPlatform> {
+    pub domain: P::Domain,
+    pub bar: MmioWindow<P::Mmio>,
+    pub dma: DmaRegion<P::Dma>,
+}
+
+/// Outcome of bring-up that may hand back live DMA/BAR for the session path.
+pub struct BringupOutcome<P: HermesPlatform> {
+    pub report: BringupReport,
+    pub retained: Option<RetainedResources<P>>,
+}
+
+impl<P: HermesPlatform> BringupOutcome<P> {
+    pub fn release(self, platform: &P) -> BringupReport {
+        if let Some(r) = self.retained {
+            platform.release_dma(r.dma);
+            platform.unmap_bar(r.bar);
+            platform.release_domain(r.domain);
+        }
+        let mut report = self.report;
+        report.resources_retained = false;
+        report
+    }
+}
+
+fn fail<P: HermesPlatform>(report: BringupReport) -> BringupOutcome<P> {
+    BringupOutcome {
+        report,
+        retained: None,
+    }
+}
+
+/// Compat wrapper: always releases domain/BAR/DMA before return.
 pub fn run_bringup<P: HermesPlatform>(
     platform: &P,
     request: &BringupRequest<'_>,
 ) -> BringupReport {
+    let outcome = run_bringup_ex(platform, request);
+    let mut report = outcome.release(platform);
+    report.resources_retained = false;
+    report
+}
+
+/// Extended bring-up: may retain domain/BAR/DMA when Online and `retain_on_online`.
+pub fn run_bringup_ex<P: HermesPlatform>(
+    platform: &P,
+    request: &BringupRequest<'_>,
+) -> BringupOutcome<P> {
     let mut report = BringupReport {
         admitted: None,
         firmware: None,
@@ -192,20 +222,28 @@ pub fn run_bringup<P: HermesPlatform>(
         mailbox: None,
         wpr_locked_observed: false,
         final_evidence: HardwareEvidence::none(),
+        resources_retained: false,
     };
+
+    if let Some(facts) = request.host_facts {
+        if let Some(fault) = host_preflight_fault(&facts) {
+            report.fault = Some(BringupFault::Hermes(fault));
+            return fail(report);
+        }
+    }
 
     let admitted = match admit_display_device(&request.identity) {
         Ok(a) => a,
         Err(e) => {
             report.fault = Some(e.into());
-            return report;
+            return fail(report);
         }
     };
     report.admitted = Some(admitted);
 
     if let Err(e) = report.manifold.observe_probe(true) {
         report.fault = Some(e.into());
-        return report;
+        return fail(report);
     }
 
     let firmware = match request
@@ -215,7 +253,7 @@ pub fn run_bringup<P: HermesPlatform>(
         Ok(fw) => fw,
         Err(e) => {
             report.fault = Some(e.into());
-            return report;
+            return fail(report);
         }
     };
     let admitted_digest = firmware.sha256;
@@ -223,7 +261,7 @@ pub fn run_bringup<P: HermesPlatform>(
 
     if let Err(e) = report.manifold.observe_firmware(true) {
         report.fault = Some(e.into());
-        return report;
+        return fail(report);
     }
 
     if request.require_bootstrap {
@@ -231,14 +269,14 @@ pub fn run_bringup<P: HermesPlatform>(
             Some(m) => m,
             None => {
                 report.fault = Some(BringupFault::BootstrapRequired);
-                return report;
+                return fail(report);
             }
         };
         match material.verify_t1000_610_43_03() {
             Ok(v) => report.bootstrap = Some(v),
             Err(e) => {
                 report.fault = Some(e.into());
-                return report;
+                return fail(report);
             }
         }
     } else if let Some(material) = request.bootstrap {
@@ -246,7 +284,7 @@ pub fn run_bringup<P: HermesPlatform>(
             Ok(v) => report.bootstrap = Some(v),
             Err(e) => {
                 report.fault = Some(e.into());
-                return report;
+                return fail(report);
             }
         }
     }
@@ -255,29 +293,27 @@ pub fn run_bringup<P: HermesPlatform>(
         Ok(d) => d,
         Err(e) => {
             report.fault = Some(e.into());
-            return report;
+            return fail(report);
         }
     };
     let domain_id = domain_token::<P>(&domain);
     report.domain_id = domain_id;
 
-    // Control BAR large enough for Falcon mailbox block (~0x11_xxxx).
     let bar = match platform.map_bar(domain, 0, 0x20_0000) {
         Ok(w) => w,
         Err(e) => {
             platform.release_domain(domain);
             report.fault = Some(e.into());
-            return report;
+            return fail(report);
         }
     };
     if let Err(e) = platform.read32(bar, 0) {
         platform.unmap_bar(bar);
         platform.release_domain(domain);
         report.fault = Some(e.into());
-        return report;
+        return fail(report);
     }
 
-    // Full-image DMA stage (chunked).
     let (stage_rep, dma) =
         match stage_gsp_rm_image(platform, domain, request.gsp_rm_image, STAGE_CHUNK_BYTES) {
             Ok(v) => v,
@@ -285,19 +321,19 @@ pub fn run_bringup<P: HermesPlatform>(
                 platform.unmap_bar(bar);
                 platform.release_domain(domain);
                 report.fault = Some(BringupFault::Hermes(HermesFault::FirmwareMissing));
-                return report;
+                return fail(report);
             }
             Err(crate::stage::StageError::Platform(e)) => {
                 platform.unmap_bar(bar);
                 platform.release_domain(domain);
                 report.fault = Some(e.into());
-                return report;
+                return fail(report);
             }
             Err(crate::stage::StageError::DigestMismatch) => {
                 platform.unmap_bar(bar);
                 platform.release_domain(domain);
                 report.fault = Some(BringupFault::StageDigestMismatch);
-                return report;
+                return fail(report);
             }
         };
     report.stage = Some(stage_rep);
@@ -307,10 +343,9 @@ pub fn run_bringup<P: HermesPlatform>(
         platform.unmap_bar(bar);
         platform.release_domain(domain);
         report.fault = Some(BringupFault::StageDigestMismatch);
-        return report;
+        return fail(report);
     }
 
-    // Combine declared hardware evidence with optional live observations.
     let mut evidence = request.hardware;
 
     if request.drive_mailbox {
@@ -318,11 +353,10 @@ pub fn run_bringup<P: HermesPlatform>(
             Ok(ev) => {
                 report.mailbox = Some(ev);
                 evidence = evidence.and(HardwareEvidence {
-                    wpr_locked: true, // mailbox path does not revoke WPR claim
+                    wpr_locked: true,
                     boot_mailbox_ok: ev.mailbox_ok,
                     ready_queue_observed: ev.ready_ok,
                 });
-                // If handshake saw nothing, force mailbox/ready false.
                 if !ev.mailbox_ok || !ev.ready_ok {
                     evidence.boot_mailbox_ok = false;
                     evidence.ready_queue_observed = false;
@@ -336,7 +370,7 @@ pub fn run_bringup<P: HermesPlatform>(
                 platform.unmap_bar(bar);
                 platform.release_domain(domain);
                 report.final_evidence = evidence;
-                return report;
+                return fail(report);
             }
         }
     }
@@ -350,7 +384,7 @@ pub fn run_bringup<P: HermesPlatform>(
                 platform.unmap_bar(bar);
                 platform.release_domain(domain);
                 report.final_evidence = evidence;
-                return report;
+                return fail(report);
             }
         };
         let boot_off = match request.wpr_boot_offsets {
@@ -361,21 +395,14 @@ pub fn run_bringup<P: HermesPlatform>(
                 platform.unmap_bar(bar);
                 platform.release_domain(domain);
                 report.final_evidence = evidence;
-                return report;
+                return fail(report);
             }
         };
-        // WPR DMA addresses must be page-aligned and nonzero. Prefer operator
-        // overrides (real VT-d IOVAs); otherwise use proven-valid sim defaults
-        // that satisfy TuringWprPlan::build while staging still used last_device_address
-        // only as a fallback when it is page-aligned.
-        let boot_bin = request
-            .gsp_boot_binary_address
-            .unwrap_or(0x1_0200_0000);
+        let boot_bin = request.gsp_boot_binary_address.unwrap_or(0x1_0200_0000);
         let meta_addr = (boot_bin.wrapping_add(T1000_GSP_BOOT_BINARY_BYTES) + 4095) & !4095u64;
         let gsp_rm_iova = if stage_rep.last_device_address != 0
             && stage_rep.last_device_address % 4096 == 0
         {
-            // Prefer staged region when it is a legal IOVA; else fall back.
             stage_rep.last_device_address
         } else {
             0x1_0000_0000
@@ -390,7 +417,6 @@ pub fn run_bringup<P: HermesPlatform>(
             Ok(plan) => match plan.booter_load(meta_addr) {
                 Ok(load) => {
                     let (lo, hi) = load.mailbox_words();
-                    // Post SEC2-style metadata address through Falcon mailboxes.
                     if platform.write32(bar, 0x0011_0040, lo).is_err()
                         || platform.write32(bar, 0x0011_0044, hi).is_err()
                     {
@@ -400,11 +426,9 @@ pub fn run_bringup<P: HermesPlatform>(
                         platform.unmap_bar(bar);
                         platform.release_domain(domain);
                         report.final_evidence = evidence;
-                        return report;
+                        return fail(report);
                     }
                     let _ = platform.io_fence();
-                    // Booter completion: mailbox0 must be 0 and WPR2 active.
-                    // Platforms that model SEC2 success clear MB0; otherwise complete fails.
                     let mb0 = platform.read32(bar, 0x0011_0040).unwrap_or(0xffff_ffff);
                     let wpr_active = request.hardware.wpr_locked;
                     match load.complete(mb0, wpr_active) {
@@ -429,7 +453,7 @@ pub fn run_bringup<P: HermesPlatform>(
                     platform.unmap_bar(bar);
                     platform.release_domain(domain);
                     report.final_evidence = evidence;
-                    return report;
+                    return fail(report);
                 }
             },
             Err(e) => {
@@ -438,7 +462,7 @@ pub fn run_bringup<P: HermesPlatform>(
                 platform.unmap_bar(bar);
                 platform.release_domain(domain);
                 report.final_evidence = evidence;
-                return report;
+                return fail(report);
             }
         }
     }
@@ -450,7 +474,7 @@ pub fn run_bringup<P: HermesPlatform>(
         platform.unmap_bar(bar);
         platform.release_domain(domain);
         report.fault = Some(e.into());
-        return report;
+        return fail(report);
     }
 
     if let Err(e) = report.manifold.negotiate(request.features) {
@@ -458,7 +482,7 @@ pub fn run_bringup<P: HermesPlatform>(
         platform.unmap_bar(bar);
         platform.release_domain(domain);
         report.fault = Some(e.into());
-        return report;
+        return fail(report);
     }
 
     match report.manifold.ignite(
@@ -472,21 +496,28 @@ pub fn run_bringup<P: HermesPlatform>(
             platform.release_dma(dma);
             platform.unmap_bar(bar);
             platform.release_domain(domain);
-            return report;
+            return fail(report);
         }
     }
 
-    platform.release_dma(dma);
-    platform.unmap_bar(bar);
-    platform.release_domain(domain);
-
     let _ = firmware_family_for_device(request.identity.device_id);
-    report
+
+    if request.retain_on_online {
+        report.resources_retained = true;
+        BringupOutcome {
+            report,
+            retained: Some(RetainedResources { domain, bar, dma }),
+        }
+    } else {
+        platform.release_dma(dma);
+        platform.unmap_bar(bar);
+        platform.release_domain(domain);
+        fail(report)
+    }
 }
 
 /// Sim-friendly WPR framebuffer sample that `TuringWprPlan::build` accepts.
 pub fn sample_turing_wpr_framebuffer() -> TuringFramebufferEvidence {
-    // Matches hermes-gsp WPR unit-test geometry (valid for TuringWprPlan::build).
     TuringFramebufferEvidence {
         usable_bytes: 4 * 1024 * 1024 * 1024,
         vga_workspace_offset: 4 * 1024 * 1024 * 1024 - 2 * 1024 * 1024,
@@ -499,7 +530,6 @@ pub fn sample_turing_wpr_framebuffer() -> TuringFramebufferEvidence {
 }
 
 pub fn sample_turing_boot_offsets() -> TuringRiscvBootOffsets {
-    // Offsets must be < T1000_GSP_BOOT_BINARY_BYTES (4096) and 4-byte aligned.
     TuringRiscvBootOffsets {
         monitor_code_offset: 0,
         monitor_data_offset: 0,

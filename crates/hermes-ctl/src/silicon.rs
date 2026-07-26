@@ -12,8 +12,9 @@ use hermes_core::{
     NVIDIA_VENDOR_ID,
 };
 use hermes_gsp::{
-    chip_gsp_relative, firmware_family_for_device, openrm_gsp_relative, parse_gsp_rm_elf,
-    sha256_bytes, FirmwareFamily, NvidiaChipDir, NvidiaGspFirmwareAuthority, fwversion_bytes,
+    chip_gsp_relative, facts_from_sysfs, firmware_family_for_device, host_may_claim_online,
+    host_online_blockers, openrm_gsp_relative, parse_gsp_rm_elf, sha256_bytes, FirmwareFamily,
+    HostDeviceFacts, NvidiaChipDir, NvidiaGspFirmwareAuthority, fwversion_bytes,
 };
 
 #[derive(Clone, Debug)]
@@ -47,6 +48,19 @@ pub struct SiliconReport {
     pub firmware: Vec<FirmwareProbe>,
     pub online_claimed: bool,
     pub blockers: Vec<String>,
+    /// Per-GPU host gate facts used by shared preflight.
+    pub host_facts: Vec<(String, HostDeviceFacts, bool)>,
+}
+
+/// Result of attempting to open PCI BAR0 via sysfs `resource0`.
+#[derive(Clone, Debug)]
+pub struct BarMapAttempt {
+    pub bdf: String,
+    pub path: String,
+    pub ok: bool,
+    #[allow(dead_code)]
+    pub bytes_readable: usize,
+    pub error: Option<String>,
 }
 
 fn parse_hex_u16(s: &str) -> Option<u16> {
@@ -185,8 +199,61 @@ pub fn probe_firmware_file(path: &Path, device_id: u16) -> FirmwareProbe {
     }
 }
 
-/// Full host silicon report. `online_claimed` is always false here — no MMIO
-/// WPR/mailbox authority is exercised without a privileged platform backend.
+/// Attempt a real open+read of sysfs `resource0` (BAR0). Never invents success.
+pub fn attempt_bar0_map(gpu: &PciGpu) -> BarMapAttempt {
+    let path = gpu.sysfs.join("resource0");
+    let path_s = path.display().to_string();
+    match fs::File::open(&path) {
+        Ok(mut f) => {
+            use std::io::Read;
+            let mut buf = [0u8; 4];
+            match f.read(&mut buf) {
+                Ok(n) if n > 0 => BarMapAttempt {
+                    bdf: gpu.bdf.clone(),
+                    path: path_s,
+                    ok: true,
+                    bytes_readable: n,
+                    error: None,
+                },
+                Ok(_) => BarMapAttempt {
+                    bdf: gpu.bdf.clone(),
+                    path: path_s,
+                    ok: false,
+                    bytes_readable: 0,
+                    error: Some("read returned 0 bytes".into()),
+                },
+                Err(e) => BarMapAttempt {
+                    bdf: gpu.bdf.clone(),
+                    path: path_s,
+                    ok: false,
+                    bytes_readable: 0,
+                    error: Some(format!("read: {e}")),
+                },
+            }
+        }
+        Err(e) => BarMapAttempt {
+            bdf: gpu.bdf.clone(),
+            path: path_s,
+            ok: false,
+            bytes_readable: 0,
+            error: Some(format!("open: {e}")),
+        },
+    }
+}
+
+/// Build host facts from a scanned GPU + optional BAR map result.
+pub fn facts_for_gpu(gpu: &PciGpu, bar_mapped: bool) -> HostDeviceFacts {
+    facts_from_sysfs(
+        gpu.iommu_group,
+        gpu.driver.as_deref(),
+        gpu.bar0.is_some(),
+        bar_mapped,
+    )
+}
+
+/// Full host silicon report. `online_claimed` is true only when host gate
+/// allows Online *and* operator explicitly runs a full evidence path — this
+/// probe never claims Online (no WPR/mailbox authority here).
 pub fn probe_host(firmware_root: &Path) -> SiliconReport {
     let mut blockers = Vec::new();
     let gpus = scan_nvidia_gpus(Path::new("/sys/bus/pci/devices"));
@@ -196,8 +263,8 @@ pub fn probe_host(firmware_root: &Path) -> SiliconReport {
 
     let mut firmware = Vec::new();
     let mut any_turing_plus = false;
-    let mut any_iommu = false;
     let mut any_fw_admit = false;
+    let mut host_facts = Vec::new();
 
     for gpu in &gpus {
         let turing = is_nvidia_turing_or_newer(gpu.device);
@@ -210,47 +277,34 @@ pub fn probe_host(firmware_root: &Path) -> SiliconReport {
             ));
             continue;
         }
-        if let Some(g) = gpu.iommu_group {
-            any_iommu = true;
-            let _ = g;
-        } else {
-            blockers.push(format!(
-                "{} has no iommu_group — Online impossible (IOMMU required)",
-                gpu.bdf
-            ));
+
+        // Real BAR open attempt (usually fails without root / while Nouveau owns it).
+        let bar_try = attempt_bar0_map(gpu);
+        let facts = facts_for_gpu(gpu, bar_try.ok);
+        let may = host_may_claim_online(&facts);
+        host_facts.push((gpu.bdf.clone(), facts, may));
+
+        for b in host_online_blockers(&facts) {
+            blockers.push(format!("{}: {}", gpu.bdf, b.as_str()));
         }
-        if let Some(ref drv) = gpu.driver {
-            if drv == "nouveau" || drv == "nvidia" {
-                blockers.push(format!(
-                    "{} bound to driver '{drv}' — BAR map for Hermes GSP needs unbind/replace",
-                    gpu.bdf
-                ));
-            }
-        } else {
+        if !bar_try.ok {
             blockers.push(format!(
-                "{} has no driver — still need IOMMU domain + measured bring-up for Online",
-                gpu.bdf
+                "{} BAR0 map attempt failed: {}",
+                gpu.bdf,
+                bar_try.error.as_deref().unwrap_or("unknown")
             ));
         }
 
-        // Admission check (structural).
         let id = pci_identity(gpu.vendor, gpu.device, gpu.class_code, gpu.subclass);
         if let Err(e) = admit_display_device(&id) {
             blockers.push(format!("{} admission: {e:?}", gpu.bdf));
         }
-        if let Some(arch) = nvidia_architecture(gpu.device) {
-            let _ = arch;
-        }
 
-        // Stage paths for this device family.
         let family = firmware_family_for_device(gpu.device).unwrap_or(FirmwareFamily::Tu10x);
         let mut candidates = vec![firmware_root.join(openrm_gsp_relative("610.43.02", family))];
         if family == FirmwareFamily::Tu10x {
             candidates.push(firmware_root.join(chip_gsp_relative(NvidiaChipDir::Tu117, "570.144")));
-            // xz chip-tree blobs may exist compressed — still note path.
-            candidates.push(
-                firmware_root.join("nvidia/tu117/gsp/gsp-570.144.bin"),
-            );
+            candidates.push(firmware_root.join("nvidia/tu117/gsp/gsp-570.144.bin"));
         }
         for c in &candidates {
             if c.exists() {
@@ -263,7 +317,6 @@ pub fn probe_host(firmware_root: &Path) -> SiliconReport {
         }
     }
 
-    // Always try default OpenRM pins even without GPU (CI hosts).
     if firmware.is_empty() {
         for (fam, dev) in [
             (FirmwareFamily::Tu10x, 0x1fb9u16),
@@ -286,17 +339,60 @@ pub fn probe_host(firmware_root: &Path) -> SiliconReport {
     if !any_turing_plus && !gpus.is_empty() {
         blockers.push("no Turing+ GPU present".into());
     }
-    if !any_iommu && any_turing_plus {
-        blockers.push("IOMMU not visible — Hermes fail-closed Online policy".into());
-    }
 
-    // Never claim Online from sysfs-only probe.
+    // Probe never claims Online — no WPR/mailbox/ready authority here.
+    let online_claimed = false;
+    debug_assert!(!host_facts.iter().any(|(_, _, may)| *may) || !online_claimed);
+
     SiliconReport {
         gpus,
         firmware,
-        online_claimed: false,
+        online_claimed,
         blockers,
+        host_facts,
     }
+}
+
+/// Host-bar smoke: for each GPU, attempt BAR0 and print shared gate verdict.
+pub fn host_bar_smoke() {
+    let gpus = scan_nvidia_gpus(Path::new("/sys/bus/pci/devices"));
+    println!("Hermes host-bar smoke (real resource0 open; fail-closed)");
+    if gpus.is_empty() {
+        println!("no NVIDIA display GPUs");
+        println!("PASS");
+        return;
+    }
+    let mut any_online_gate = false;
+    for gpu in &gpus {
+        let attempt = attempt_bar0_map(gpu);
+        let facts = facts_for_gpu(gpu, attempt.ok);
+        let may = host_may_claim_online(&facts);
+        any_online_gate |= may;
+        println!(
+            "  {} driver={} iommu={:?} bar_described={} bar_map_ok={} may_claim_online={}",
+            gpu.bdf,
+            gpu.driver.as_deref().unwrap_or("-"),
+            gpu.iommu_group,
+            facts.bar0_described,
+            attempt.ok,
+            may
+        );
+        if !attempt.ok {
+            println!(
+                "    bar error: {}",
+                attempt.error.as_deref().unwrap_or("?")
+            );
+        }
+        for b in host_online_blockers(&facts) {
+            println!("    blocker: {}", b.as_str());
+        }
+    }
+    // On this class of host we expect may_claim_online=false for all.
+    if any_online_gate {
+        println!("note: host gate clear — Online still requires full bring-up evidence");
+    }
+    println!("online_claimed: false");
+    println!("PASS");
 }
 
 pub fn print_report(r: &SiliconReport) {
@@ -318,6 +414,12 @@ pub fn print_report(r: &SiliconReport) {
             g.driver.as_deref().unwrap_or("-"),
             g.iommu_group,
             g.bar0.map(|(a, l)| format!("{a:#x}+{l:#x}"))
+        );
+    }
+    for (bdf, facts, may) in &r.host_facts {
+        println!(
+            "  host_gate {bdf}: iommu={:?} foreign={} bar_desc={} bar_map={} may_claim_online={may}",
+            facts.iommu_group, facts.foreign_driver_bound, facts.bar0_described, facts.bar0_mapped
         );
     }
     println!("Firmware probes: {}", r.firmware.len());

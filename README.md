@@ -127,12 +127,12 @@ cargo run -p hermes-ctl --bin hermes-ctl -- silicon-bringup sim
 cargo run -p hermes-ctl --bin hermes-ctl -- silicon-bringup live-fw
 ```
 
-`run_bringup` now **stages the entire GSP-RM image** (chunked DMA + staged
-SHA-256 must match admit), optionally drives Falcon mailbox and WPR/SEC2 paths,
-and ANDs live observations into evidence (never invents Online). `live-fw` loads
-real `/lib/firmware/nvidia/610.43.02/gsp_tu10x.bin` through the shared sequencer
-on SimPlatform. Host `silicon-probe` still reports `online_claimed: false` when
-IOMMU is missing or Nouveau owns the device.
+`run_bringup` stages the entire GSP-RM image (chunked DMA + staged SHA-256),
+optionally drives Falcon mailbox and WPR/SEC2, and ANDs live observations into
+evidence. Host preflight (`HostDeviceFacts`) rejects Nouveau/no-IOMMU before
+isolation. `host-bar` opens real sysfs `resource0` (usually Permission denied).
+`session-smoke` retains domain/BAR/DMA until explicit release. Online is never
+invented when gates are incomplete.
 
 ## Drop-in install (Linux)
 

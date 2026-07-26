@@ -146,6 +146,7 @@ pub struct VerifiedFirmware {
 }
 
 /// Authenticates images against an allow-list. Empty allow-list rejects all.
+#[derive(Clone, Copy)]
 pub struct NvidiaGspFirmwareAuthority<'a> {
     allow_list: &'a [NvidiaGspFirmwareManifest],
 }

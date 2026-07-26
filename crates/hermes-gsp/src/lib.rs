@@ -13,6 +13,7 @@ pub mod bootstrap;
 pub mod bringup;
 pub mod elf_gsp;
 pub mod firmware;
+pub mod host_gate;
 pub mod layout;
 pub mod mailbox;
 pub mod regs;
@@ -25,8 +26,14 @@ pub use bootstrap::{
     T1000_TU117_BOOTSTRAP_610_43_03,
 };
 pub use bringup::{
-    sample_turing_boot_offsets, sample_turing_wpr_framebuffer, BringupFault, BringupReport,
-    BringupRequest, HardwareEvidence, run_bringup,
+    run_bringup, run_bringup_ex, sample_turing_boot_offsets, sample_turing_wpr_framebuffer,
+    BringupFault, BringupOutcome, BringupReport, BringupRequest, HardwareEvidence,
+    RetainedResources,
+};
+pub use host_gate::{
+    facts_from_sysfs, host_isolation_ready, host_may_claim_online, host_online_blockers,
+    host_preflight_fault, host_preflight_fault_require_map, is_foreign_gpu_driver,
+    is_hermes_or_nvidia_driver, HostDeviceFacts, HostGateBlocker,
 };
 pub use stage::{
     stage_gsp_rm_image, stage_matches_admit, StageError, StageReport, STAGE_CHUNK_BYTES,
