@@ -13,6 +13,7 @@
 #include <linux/version.h>
 #include <linux/namei.h>
 #include <linux/path.h>
+#include <linux/pci.h>
 
 #include "include/hermes_kmod.h"
 #include "include/hermes_ctl_uapi.h"
@@ -21,12 +22,10 @@
 #define HERMES_CHAR_NAME_0 "nvidia0"
 #define HERMES_CHAR_COUNT 2
 
-/* IOCtl base for Hermes RM-shaped control (not proprietary numbers). */
-#define HERMES_CTL_IOCTL_BASE 0x48
-#define HERMES_CTL_IOCTL_STATUS _IOR(HERMES_CTL_IOCTL_BASE, 0x10, struct hermes_ctl_status)
-
 extern bool hermes_gsp_is_online(void);
 extern enum hermes_phase hermes_gsp_phase(void);
+extern void hermes_gsp_set_state(bool online, enum hermes_phase phase);
+extern bool hermes_allow_sim_promote;
 
 static dev_t hermes_char_devt;
 static struct class *hermes_char_class;
@@ -123,11 +122,76 @@ static int hermes_char_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
+static int hermes_sim_promote(void)
+{
+	struct pci_dev *pdev = NULL;
+	struct hermes_pci_id id;
+	struct hermes_hw_evidence ev = {
+		.iommu_isolated = true,
+		.dma_domain = 1,
+		.wpr_locked = true,
+		.mailbox_ok = true,
+		.ready_ok = true,
+		.firmware_measured = true,
+	};
+	struct hermes_bringup_result r;
+	int found = 0;
+
+	if (!hermes_allow_sim_promote) {
+		pr_info("hermes/nvidia: SIM_PROMOTE denied (allow_sim_promote=0)\n");
+		return -EPERM;
+	}
+
+	while ((pdev = pci_get_device(PCI_VENDOR_ID_NVIDIA, PCI_ANY_ID, pdev)) !=
+	       NULL) {
+		u8 class_code = (pdev->class >> 16) & 0xff;
+
+		if (!hermes_is_turing_or_newer(pdev->device))
+			continue;
+		/* Display controller (VGA/3D) preferred. */
+		if (class_code != 0x03)
+			continue;
+		id.vendor = pdev->vendor;
+		id.device = pdev->device;
+		id.class_code = class_code;
+		id.subclass = (pdev->class >> 8) & 0xff;
+		r = hermes_run_bringup(&id, &ev);
+		hermes_gsp_set_state(r.online, r.phase);
+		found = 1;
+		pr_warn("hermes/nvidia: SIM_PROMOTE device %04x:%04x online=%d phase=%s (not silicon measure)\n",
+			id.vendor, id.device, r.online,
+			hermes_phase_name(r.phase));
+		pci_dev_put(pdev);
+		break;
+	}
+	if (!found) {
+		pr_info("hermes/nvidia: SIM_PROMOTE: no Turing+ display GPU\n");
+		return -ENODEV;
+	}
+	return r.online ? 0 : -EIO;
+}
+
 static long hermes_char_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	struct hermes_ctl_status st;
 	unsigned mask;
+	int err = 0;
 
+	(void)file;
+
+	if (cmd == HERMES_CTL_IOCTL_SIM_PROMOTE) {
+		mutex_lock(&hermes_char_lock);
+		err = hermes_sim_promote();
+		mutex_unlock(&hermes_char_lock);
+		return err;
+	}
+	if (cmd == HERMES_CTL_IOCTL_DEMOTE) {
+		mutex_lock(&hermes_char_lock);
+		hermes_gsp_set_state(false, HERMES_PHASE_OFFLINE);
+		pr_info("hermes/nvidia: DEMOTE → Offline\n");
+		mutex_unlock(&hermes_char_lock);
+		return 0;
+	}
 	if (cmd != HERMES_CTL_IOCTL_STATUS)
 		return -ENOTTY;
 

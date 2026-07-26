@@ -69,6 +69,9 @@ bool hermes_gsp_is_online(void);
 enum hermes_phase hermes_gsp_phase(void);
 void hermes_gsp_set_state(bool online, enum hermes_phase phase);
 
+/* When true, HERMES_CTL_IOCTL_SIM_PROMOTE may mint Online with full sim evidence. */
+extern bool hermes_allow_sim_promote;
+
 /* Character device surface (/dev/nvidiactl, /dev/nvidia0). */
 int hermes_chardev_init(void);
 void hermes_chardev_exit(void);

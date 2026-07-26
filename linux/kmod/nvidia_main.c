@@ -12,6 +12,16 @@
 static bool hermes_online;
 static enum hermes_phase hermes_phase = HERMES_PHASE_OFFLINE;
 
+/*
+ * allow_sim_promote=1 enables HERMES_CTL_IOCTL_SIM_PROMOTE (complete-evidence
+ * Online for integration tests). Default 0: fail-closed, no invented Online.
+ */
+bool hermes_allow_sim_promote;
+module_param_named(allow_sim_promote, hermes_allow_sim_promote, bool, 0644);
+MODULE_PARM_DESC(allow_sim_promote,
+		 "Allow SIM_PROMOTE ioctl (complete-evidence Online; not silicon)");
+EXPORT_SYMBOL_GPL(hermes_allow_sim_promote);
+
 bool hermes_gsp_is_online(void)
 {
 	return hermes_online;

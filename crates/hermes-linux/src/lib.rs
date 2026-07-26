@@ -184,6 +184,11 @@ pub const DROP_IN_CATALOG: &[DropInSurface] = &[
         hermes_crate: "linux/kmod",
     },
     DropInSurface {
+        kind: "device",
+        name: "/dev/nvidia-peermem",
+        hermes_crate: "linux/kmod",
+    },
+    DropInSurface {
         kind: "bin",
         name: userspace::NVIDIA_SMI,
         hermes_crate: "hermes-ctl",
@@ -271,7 +276,7 @@ pub fn drop_in_catalog_len() -> usize {
 }
 
 /// Target count of classic open-stack named surfaces Hermes advertises.
-pub const DROP_IN_PARITY_TARGET: usize = 28;
+pub const DROP_IN_PARITY_TARGET: usize = 29;
 
 /// Percent of parity target covered by the live catalog (capped at 100).
 pub fn drop_in_parity_percent() -> u32 {

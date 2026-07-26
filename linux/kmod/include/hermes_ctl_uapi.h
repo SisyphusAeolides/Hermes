@@ -8,9 +8,10 @@
 typedef uint32_t __u32;
 #else
 #include <linux/types.h>
+#include <linux/ioctl.h>
 #endif
 
-#define HERMES_CTL_STATUS_VERSION 2
+#define HERMES_CTL_STATUS_VERSION 3
 
 struct hermes_ctl_status {
 	__u32 gsp_online;
@@ -18,6 +19,20 @@ struct hermes_ctl_status {
 	__u32 version;
 	__u32 module_mask; /* bit0 nvidia,1 modeset,2 uvm,3 drm,4 peermem */
 };
+
+#define HERMES_CTL_IOCTL_BASE 0x48 /* 'H' */
+
+#ifndef HERMES_HOST_TEST
+#define HERMES_CTL_IOCTL_STATUS \
+	_IOR(HERMES_CTL_IOCTL_BASE, 0x10, struct hermes_ctl_status)
+/*
+ * SIM_PROMOTE: complete-evidence bring-up on first Turing+ NVIDIA PCI GPU.
+ * Requires module_param allow_sim_promote=1. Integration gate only — not a
+ * claim of measured silicon. DEMOTE forces Offline again.
+ */
+#define HERMES_CTL_IOCTL_SIM_PROMOTE _IO(HERMES_CTL_IOCTL_BASE, 0x11)
+#define HERMES_CTL_IOCTL_DEMOTE _IO(HERMES_CTL_IOCTL_BASE, 0x12)
+#endif
 
 #define HERMES_MOD_NVIDIA (1u << 0)
 #define HERMES_MOD_MODESET (1u << 1)

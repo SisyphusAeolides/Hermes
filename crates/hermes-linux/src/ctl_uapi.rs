@@ -4,12 +4,15 @@
 //! `hermes-ctl` probes nodes with these structures.
 
 /// Matches `HERMES_CTL_STATUS_VERSION` in the kernel uAPI.
-pub const HERMES_CTL_STATUS_VERSION: u32 = 2;
+pub const HERMES_CTL_STATUS_VERSION: u32 = 3;
 
 /// Ioctl type byte (`'H'`).
 pub const HERMES_CTL_IOCTL_BASE: u8 = 0x48;
 /// Status ioctl number (matches kmod `HERMES_CTL_IOCTL_STATUS`).
 pub const HERMES_CTL_IOCTL_STATUS_NR: u8 = 0x10;
+pub const HERMES_CTL_IOCTL_SIM_PROMOTE_NR: u8 = 0x11;
+pub const HERMES_CTL_IOCTL_DEMOTE_NR: u8 = 0x12;
+pub const HERMES_COMPANION_IOCTL_STATUS_NR: u8 = 0x20;
 
 pub const HERMES_MOD_NVIDIA: u32 = 1 << 0;
 pub const HERMES_MOD_MODESET: u32 = 1 << 1;
@@ -160,6 +163,25 @@ pub fn hermes_drm_ioctl_get_prop() -> u64 {
     ((IOC_READ | IOC_WRITE) << 30)
         | ((HERMES_DRM_IOCTL_BASE as u64) << 8)
         | (HERMES_DRM_IOCTL_GET_PROP_NR as u64)
+        | (SIZE << 16)
+}
+
+/// `_IO('H', nr)` — no size/direction bits.
+pub fn hermes_ctl_ioctl_sim_promote() -> u64 {
+    ((HERMES_CTL_IOCTL_BASE as u64) << 8) | (HERMES_CTL_IOCTL_SIM_PROMOTE_NR as u64)
+}
+
+pub fn hermes_ctl_ioctl_demote() -> u64 {
+    ((HERMES_CTL_IOCTL_BASE as u64) << 8) | (HERMES_CTL_IOCTL_DEMOTE_NR as u64)
+}
+
+/// Companion STATUS (`_IOR('H', 0x20, hermes_ctl_status)`).
+pub fn hermes_companion_ioctl_status() -> u64 {
+    const IOC_READ: u64 = 2;
+    const SIZE: u64 = core::mem::size_of::<HermesCtlStatus>() as u64;
+    (IOC_READ << 30)
+        | ((HERMES_CTL_IOCTL_BASE as u64) << 8)
+        | (HERMES_COMPANION_IOCTL_STATUS_NR as u64)
         | (SIZE << 16)
 }
 

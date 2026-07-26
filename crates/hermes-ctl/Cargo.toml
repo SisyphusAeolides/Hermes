@@ -7,6 +7,7 @@ rust-version.workspace = true
 description = "Hermes GSP control and host prerequisite inspection"
 authors.workspace = true
 repository.workspace = true
+default-run = "hermes-ctl"
 
 [[bin]]
 name = "hermes-ctl"

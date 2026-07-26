@@ -70,8 +70,10 @@ pub fn probe() -> ChardevProbe {
         "/dev/nvidiactl",
         "/dev/nvidia0",
         "/dev/nvidia-uvm",
+        "/dev/nvidia-uvm-tools",
         "/dev/nvidia-modeset",
         "/dev/nvidia-drm",
+        "/dev/nvidia-peermem",
     ];
     let nodes: Vec<_> = node_paths
         .iter()

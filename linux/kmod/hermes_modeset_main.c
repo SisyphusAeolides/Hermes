@@ -1,24 +1,36 @@
 // SPDX-License-Identifier: MIT
 /*
  * Hermes modeset companion — module name nvidia-modeset.
- * /dev/nvidia-modeset char surface; ops require GSP Online.
+ * /dev/nvidia-modeset char surface; STATUS always, other ops require Online.
  */
 
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/miscdevice.h>
 #include <linux/uaccess.h>
+#include <linux/ioctl.h>
 
 #include "include/hermes_kmod.h"
+#include "include/hermes_ctl_uapi.h"
+#include "include/hermes_companion_uapi.h"
 
 extern bool hermes_gsp_is_online(void);
 extern enum hermes_phase hermes_gsp_phase(void);
 
-static long hermes_modeset_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+static long hermes_modeset_ioctl(struct file *file, unsigned int cmd,
+				 unsigned long arg)
 {
+	struct hermes_ctl_status st;
+
 	(void)file;
-	(void)cmd;
-	(void)arg;
+	if (cmd == HERMES_COMPANION_IOCTL_STATUS) {
+		hermes_ctl_status_fill(&st, hermes_gsp_is_online() ? 1 : 0,
+				       (unsigned)hermes_gsp_phase(),
+				       HERMES_MOD_MODESET);
+		if (copy_to_user((void __user *)arg, &st, sizeof(st)))
+			return -EFAULT;
+		return 0;
+	}
 	if (!hermes_gsp_is_online())
 		return -ENODEV;
 	return -ENOTTY;
