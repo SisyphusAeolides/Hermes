@@ -16,3 +16,14 @@ Hermes targets the same operator-facing names as
 
 Hermes provides personalities and userspace binaries under those names. Binding
 a name does not mark the GPU Online; the manifold gates still apply.
+
+## Display / compute userspace (in progress)
+
+| Surface | Hermes crate | Notes |
+|---|---|---|
+| DRM/KMS atomic | `hermes-drm` | Modeset foundation; backs future `nvidia-drm` |
+| Mesa / Vulkan ICD | `hermes-mesa` | `libhermes_mesa.so` ICD name; GSP-gated |
+| CUDA driver API | `hermes-cuda` | `cu*` / `cuda*` shell; GSP-gated |
+| CCCL catalog | `hermes-cccl` | Thrust/CUB inventory + host subset |
+
+See `docs/DRM_MESA.md` and `docs/CCCL_CUDA.md`.

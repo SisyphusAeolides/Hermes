@@ -44,10 +44,15 @@ crates/
   hermes-settings/  nvidia-settings + hermes-settings binaries
   hermes-nvml/      NVML-compatible shared library surface
   hermes-ctl/       hermes-ctl + nvidia-smi binaries
+  hermes-nouveau/   Nouveau GSP path tables + superiority matrix
+  hermes-cccl/      CCCL (Thrust/CUB) catalog + host subset
+  hermes-cuda/      GSP-gated CUDA driver/runtime shell
+  hermes-drm/       Atomic modeset foundation (GSP-gated)
+  hermes-mesa/      Vulkan ICD + GL stubs + present path
 formal/
-  idris2/           HermesAuthority.idr
-  agda/             HermesWire.agda
-  austral/          HermesResources, HermesRings, HermesFailClosed
+  idris2/           HermesAuthority, NvkmGsp, Cccl, DrmKms
+  agda/             HermesWire, NvkmGsp, Cccl, DrmKms
+  austral/          HermesResources, HermesRings, HermesFailClosed, DrmKms, …
 ```
 
 ## Build and test
@@ -96,6 +101,19 @@ cargo run -p hermes-ctl -- cuda-smoke online
 See [`docs/CCCL_CUDA.md`](docs/CCCL_CUDA.md). CCCL (Thrust/CUB/libcu++) is the
 open CUDA **C++ library** layer; `hermes-cuda` is the driver/runtime shell and
 **rejects all device calls while GSP is offline**.
+
+### DRM/KMS and Mesa
+
+```sh
+cargo test -p hermes-drm -p hermes-mesa
+cargo run -p hermes-ctl -- drm-smoke online
+cargo run -p hermes-ctl -- drm-smoke dual
+cargo run -p hermes-ctl -- mesa-smoke offline
+cargo run -p hermes-ctl -- mesa-smoke online
+```
+
+See [`docs/DRM_MESA.md`](docs/DRM_MESA.md). Atomic modeset and the Vulkan ICD
+surface only succeed when GSP is Online; Offline is fail-closed.
 
 ## Drop-in install (Linux)
 

@@ -1,0 +1,17 @@
+[package]
+name = "hermes-drm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "DRM/KMS atomic modeset foundation for Hermes (Nouveau-shaped, GSP-gated)"
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+hermes-core = { workspace = true }
+hermes-gsp = { workspace = true }
+hermes-nouveau = { workspace = true }

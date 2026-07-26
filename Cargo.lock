@@ -81,8 +81,10 @@ dependencies = [
  "hermes-cccl",
  "hermes-core",
  "hermes-cuda",
+ "hermes-drm",
  "hermes-gsp",
  "hermes-linux",
+ "hermes-mesa",
  "hermes-nouveau",
 ]
 
@@ -93,6 +95,15 @@ dependencies = [
  "hermes-cccl",
  "hermes-core",
  "hermes-gsp",
+]
+
+[[package]]
+name = "hermes-drm"
+version = "0.1.0"
+dependencies = [
+ "hermes-core",
+ "hermes-gsp",
+ "hermes-nouveau",
 ]
 
 [[package]]
@@ -111,6 +122,14 @@ dependencies = [
  "hermes-abi",
  "hermes-core",
  "hermes-gsp",
+]
+
+[[package]]
+name = "hermes-mesa"
+version = "0.1.0"
+dependencies = [
+ "hermes-core",
+ "hermes-drm",
 ]
 
 [[package]]

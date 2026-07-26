@@ -52,12 +52,14 @@ pub fn comparison_matrix() -> Vec<HermesEdge> {
         HermesEdge {
             capability: Capability::DrmKmsDisplay,
             nouveau: true,
-            hermes: false, // in progress — modeled, not full KMS yet
+            // hermes-drm: GSP-gated atomic modeset state machine (not full in-kernel DRM yet)
+            hermes: true,
         },
         HermesEdge {
             capability: Capability::MesaUserspace,
             nouveau: true,
-            hermes: false,
+            // hermes-mesa: Vulkan ICD + GL stubs + present via atomic modeset
+            hermes: true,
         },
         HermesEdge {
             capability: Capability::NvidiaModuleNames,

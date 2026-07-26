@@ -1,0 +1,17 @@
+module Hermes.DrmKms is
+    -- Linear modeset session: atomic apply consumes and returns Online GSP token.
+
+    type GspOnline: Free;
+    type Crtc: Linear;
+    type Plane: Linear;
+    type Framebuffer: Free;
+    type Modeset: Linear;
+
+    function requireGsp(): GspOnline;
+    function openCrtc(g: GspOnline): Crtc;
+    function openPlane(g: GspOnline): Plane;
+    function bindFramebuffer(p: Plane, fb: Framebuffer): Plane;
+    function atomicApply(c: Crtc, p: Plane, g: GspOnline): Modeset;
+    function disableCrtc(m: Modeset): GspOnline;
+    function closeModeset(m: Modeset): Unit;
+end module.

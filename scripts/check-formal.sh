@@ -39,6 +39,9 @@ if need idris2; then
   if [ -f "$ROOT/formal/idris2/Cccl.idr" ]; then
     (cd "$ROOT/formal/idris2" && idris2 --check Cccl.idr)
   fi
+  if [ -f "$ROOT/formal/idris2/DrmKms.idr" ]; then
+    (cd "$ROOT/formal/idris2" && idris2 --check DrmKms.idr)
+  fi
   checked=$((checked + 1))
   printf 'ok: idris2 formal models\n'
 fi
@@ -50,6 +53,9 @@ if need agda; then
   fi
   if [ -f "$ROOT/formal/agda/Cccl.agda" ]; then
     (cd "$ROOT/formal/agda" && agda Cccl.agda)
+  fi
+  if [ -f "$ROOT/formal/agda/DrmKms.agda" ]; then
+    (cd "$ROOT/formal/agda" && agda DrmKms.agda)
   fi
   checked=$((checked + 1))
   printf 'ok: agda formal models\n'
@@ -70,9 +76,12 @@ if need austral; then
     if [ -f Cccl.aui ]; then
       austral compile --target-type=tc Cccl.aui,Cccl.aum
     fi
+    if [ -f DrmKms.aui ]; then
+      austral compile --target-type=tc DrmKms.aui,DrmKms.aum
+    fi
   )
   checked=$((checked + 1))
-  printf 'ok: austral (6 modules)\n'
+  printf 'ok: austral formal modules\n'
 else
   n=$(find "$ROOT/formal/austral" -name '*.aui' 2>/dev/null | wc -l | tr -d ' ')
   lines=$(find "$ROOT/formal/austral" -type f \( -name '*.aui' -o -name '*.aum' \) -print0 2>/dev/null | xargs -0 cat 2>/dev/null | wc -l | tr -d ' ')

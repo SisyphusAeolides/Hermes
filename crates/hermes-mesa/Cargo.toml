@@ -1,0 +1,18 @@
+[package]
+name = "hermes-mesa"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Mesa/NVK-facing GL and Vulkan ICD surface for Hermes"
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "hermes_mesa"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+hermes-core = { workspace = true }
+hermes-drm = { workspace = true }

@@ -39,3 +39,15 @@ shared `run_bringup` manifold (firmware hash + ELF + IOMMU + WPR + mailbox + rea
 ## Crate
 
 `crates/hermes-nouveau` — NVKM layering, GSP load plans, RPC policy, capability matrix.
+
+## Display path (next layer)
+
+Nouveau couples GSP to DRM/KMS and Mesa (NVK / Nouveau GL). Hermes mirrors that
+stack with:
+
+- `crates/hermes-drm` — GSP-gated atomic modeset foundation
+- `crates/hermes-mesa` — Vulkan ICD + GL stubs + present via atomic commit
+
+See `docs/DRM_MESA.md`. Capability matrix marks `DrmKmsDisplay` and
+`MesaUserspace` as present on both sides; Hermes still owns exclusive edges for
+measured firmware, IOMMU, WPR/mailbox certificates, and formal models.

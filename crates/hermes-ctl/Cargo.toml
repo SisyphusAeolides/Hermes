@@ -23,3 +23,5 @@ hermes-linux = { workspace = true }
 hermes-nouveau = { workspace = true }
 hermes-cccl = { workspace = true }
 hermes-cuda = { workspace = true }
+hermes-drm = { workspace = true }
+hermes-mesa = { workspace = true }

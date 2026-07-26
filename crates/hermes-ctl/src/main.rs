@@ -26,6 +26,14 @@ use hermes_cuda::{
     cuDeviceGetCount, cuInit, hermes_cuda_cccl_version, hermes_cuda_reset,
     hermes_cuda_set_gsp_online, CUDA_ERROR_HERMES_GSP_OFFLINE, CUDA_SUCCESS,
 };
+use hermes_drm::{
+    AtomicCommit, AtomicRequest, DisplayMode, DrmDevice, Framebuffer, PixelFormat,
+};
+use hermes_mesa::{
+    hermes_mesa_reset, hermes_mesa_set_gsp_online, hermes_present_solid_frame,
+    hermes_vulkan_api_version, hermes_vulkan_icd_library_path, vkCreateInstance,
+    vkDestroyInstance, vkEnumeratePhysicalDevices, VK_ERROR_INCOMPATIBLE_DRIVER, VK_SUCCESS,
+};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -58,10 +66,18 @@ fn main() {
             let mode = args.next().unwrap_or_else(|| "offline".into());
             cuda_smoke(&mode);
         }
+        Some("drm-smoke") => {
+            let mode = args.next().unwrap_or_else(|| "online".into());
+            drm_smoke(&mode);
+        }
+        Some("mesa-smoke") => {
+            let mode = args.next().unwrap_or_else(|| "online".into());
+            mesa_smoke(&mode);
+        }
         _ => {
             println!("hermes-ctl — Hermes GSP control\n");
             println!(
-                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online>"
+                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online> | drm-smoke <offline|online|dual> | mesa-smoke <offline|online>"
             );
         }
     }
@@ -79,6 +95,9 @@ fn status() {
     println!("Primary module: {}", modules::NVIDIA);
     println!("Manifold default: {}", HermesManifold::dark(0).phase.label());
     println!("Kmod tree: linux/kmod (nvidia, nvidia-modeset, nvidia-uvm, nvidia-drm, nvidia-peermem)");
+    println!("Display: hermes-drm atomic modeset + hermes-mesa ICD surface");
+    println!("Vulkan ICD library: {}", hermes_vulkan_icd_library_path());
+    println!("Vulkan API version: {:#x}", hermes_vulkan_api_version());
 }
 
 fn admit_cmd(device_id: u16) {
@@ -333,6 +352,144 @@ fn firmware_scan(root: &str) {
                 Err(e) => println!("REJECT {rel}: {e:?}"),
             },
             Err(_) => println!("ABSENT {rel}"),
+        }
+    }
+}
+
+fn drm_smoke(mode: &str) {
+    match mode {
+        "offline" => {
+            let mut dev = DrmDevice::virtual_desktop(false);
+            let fb = Framebuffer::new(10, 1920, 1080, PixelFormat::Xrgb8888, 1).expect("fb");
+            dev.framebuffers.push(fb);
+            let mut atom = AtomicCommit::new();
+            let req = AtomicRequest {
+                connector_id: 1,
+                crtc_id: 1,
+                plane_id: 1,
+                fb_id: 10,
+                mode: DisplayMode::fhd_60(),
+                active: true,
+            };
+            match atom.commit(&mut dev, &req) {
+                Err(e) => {
+                    println!("atomic offline => {e:?} (expected GspOffline)");
+                    println!("PASS");
+                }
+                Ok(_) => {
+                    eprintln!("error: offline commit must fail");
+                    std::process::exit(1);
+                }
+            }
+        }
+        "online" => {
+            let mut dev = DrmDevice::virtual_desktop(true);
+            let fb = Framebuffer::new(10, 1920, 1080, PixelFormat::Xrgb8888, 1).expect("fb");
+            dev.framebuffers.push(fb);
+            let mut atom = AtomicCommit::new();
+            let req = AtomicRequest {
+                connector_id: 1,
+                crtc_id: 1,
+                plane_id: 1,
+                fb_id: 10,
+                mode: DisplayMode::fhd_60(),
+                active: true,
+            };
+            let r = atom.commit(&mut dev, &req).expect("commit");
+            println!(
+                "atomic online: seq={} active={} crtcs={}",
+                r.sequence,
+                r.active,
+                dev.active_crtc_count()
+            );
+            let d = atom.disable_crtc(&mut dev, 1).expect("disable");
+            println!("disable crtc: seq={} active={}", d.sequence, d.active);
+            if dev.active_crtc_count() != 0 {
+                eprintln!("error: CRTC should be blank after disable");
+                std::process::exit(1);
+            }
+            println!("PASS");
+        }
+        "dual" => {
+            let mut dev = DrmDevice::virtual_dual_head(true);
+            let fb0 = Framebuffer::new(10, 1920, 1080, PixelFormat::Xrgb8888, 1).expect("fb0");
+            let fb1 = Framebuffer::new(20, 1280, 720, PixelFormat::Xrgb8888, 2).expect("fb1");
+            dev.framebuffers.push(fb0);
+            dev.framebuffers.push(fb1);
+            let mut atom = AtomicCommit::new();
+            for (conn, crtc, plane, fb, mode) in [
+                (1u32, 1u32, 1u32, 10u32, DisplayMode::fhd_60()),
+                (2, 2, 2, 20, DisplayMode::hd_60()),
+            ] {
+                let req = AtomicRequest {
+                    connector_id: conn,
+                    crtc_id: crtc,
+                    plane_id: plane,
+                    fb_id: fb,
+                    mode,
+                    active: true,
+                };
+                let r = atom.commit(&mut dev, &req).expect("dual commit");
+                println!("head conn={conn}: seq={}", r.sequence);
+            }
+            if dev.active_crtc_count() != 2 {
+                eprintln!("error: expected 2 active CRTCs");
+                std::process::exit(1);
+            }
+            println!(
+                "dual-head: connectors={} active_crtcs={}",
+                dev.connector_count(),
+                dev.active_crtc_count()
+            );
+            println!("PASS");
+        }
+        other => {
+            eprintln!("use offline|online|dual, got {other}");
+            std::process::exit(2);
+        }
+    }
+}
+
+fn mesa_smoke(mode: &str) {
+    hermes_mesa_reset();
+    match mode {
+        "offline" => {
+            hermes_mesa_set_gsp_online(false);
+            let mut inst = 0u64;
+            let r = vkCreateInstance(core::ptr::null(), core::ptr::null(), &mut inst);
+            println!(
+                "vkCreateInstance offline => {r} (expect INCOMPATIBLE_DRIVER={VK_ERROR_INCOMPATIBLE_DRIVER})"
+            );
+            if r != VK_ERROR_INCOMPATIBLE_DRIVER {
+                std::process::exit(1);
+            }
+            assert!(hermes_present_solid_frame().is_err());
+            hermes_mesa_reset();
+            println!("PASS");
+        }
+        "online" => {
+            hermes_mesa_set_gsp_online(true);
+            let mut inst = 0u64;
+            let r = vkCreateInstance(core::ptr::null(), core::ptr::null(), &mut inst);
+            println!("vkCreateInstance online => {r} inst={inst}");
+            if r != VK_SUCCESS || inst == 0 {
+                std::process::exit(1);
+            }
+            let mut count = 0u32;
+            assert_eq!(
+                vkEnumeratePhysicalDevices(inst, &mut count, core::ptr::null_mut()),
+                VK_SUCCESS
+            );
+            println!("physical devices: {count}");
+            let seq = hermes_present_solid_frame().expect("present");
+            println!("present solid frame: sequence={seq}");
+            vkDestroyInstance(inst, core::ptr::null());
+            hermes_mesa_reset();
+            println!("PASS");
+        }
+        other => {
+            eprintln!("use offline|online, got {other}");
+            std::process::exit(2);
         }
     }
 }
