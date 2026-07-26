@@ -19,8 +19,9 @@ use hermes_gsp::{
 };
 use hermes_core::HermesPlatform;
 use hermes_linux::{
-    drop_in_catalog_len, drop_in_has_all_kmod_names, linux_bringup, modules, sim_full_hardware,
-    DROP_IN_CATALOG, MODULE_SURFACES, SimPlatform,
+    drop_in_catalog_len, drop_in_has_all_kmod_names, drop_in_parity_complete,
+    drop_in_parity_percent, linux_bringup, modules, sim_full_hardware, DROP_IN_CATALOG,
+    DROP_IN_PARITY_TARGET, MODULE_SURFACES, SimPlatform,
 };
 use hermes_nouveau::{
     comparison_matrix, plan_gsp_load, hermes_exclusive_count, NouveauChip,
@@ -112,13 +113,14 @@ fn main() {
         Some("session-promote") => session_promote_cmd(),
         Some("dropin-complete") => dropin_complete_cmd(),
         Some("dropin-catalog") => dropin_catalog_cmd(),
+        Some("dropin-parity") => dropin_parity_cmd(),
         Some("chardev-smoke") | Some("kmod-status") => {
             std::process::exit(chardev::smoke());
         }
         _ => {
             println!("hermes-ctl — Hermes GSP control\n");
             println!(
-                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online|deep> | drm-smoke <offline|online|dual|gem|edid> | mesa-smoke <offline|online|gem> | stack-smoke | icd-json | silicon-probe [fwroot] | host-bar | mailbox-smoke | silicon-bringup <sim|live-fw|fail-mailbox|host-block> | session-smoke | session-promote | smi-smoke <host|online> | chardev-smoke | kmod-status | dropin-catalog | dropin-complete"
+                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online|deep> | drm-smoke <offline|online|dual|gem|edid> | mesa-smoke <offline|online|gem> | stack-smoke | icd-json | silicon-probe [fwroot] | host-bar | mailbox-smoke | silicon-bringup <sim|live-fw|fail-mailbox|host-block> | session-smoke | session-promote | smi-smoke <host|online> | chardev-smoke | kmod-status | dropin-catalog | dropin-parity | dropin-complete"
             );
         }
     }
@@ -1092,19 +1094,48 @@ fn session_promote_cmd() {
 
 fn dropin_catalog_cmd() {
     println!(
-        "Hermes drop-in catalog: {} surfaces (kmod complete={})",
+        "Hermes drop-in catalog: {}/{} surfaces (kmod complete={} parity={}%)",
         drop_in_catalog_len(),
-        drop_in_has_all_kmod_names()
+        DROP_IN_PARITY_TARGET,
+        drop_in_has_all_kmod_names(),
+        drop_in_parity_percent()
     );
     println!("{:<10} {:<28} {}", "kind", "name", "crate");
     for s in DROP_IN_CATALOG {
         println!("{:<10} {:<28} {}", s.kind, s.name, s.hermes_crate);
     }
-    if !drop_in_has_all_kmod_names() || drop_in_catalog_len() < 15 {
-        eprintln!("error: catalog incomplete");
+    if !drop_in_has_all_kmod_names() || !drop_in_parity_complete() {
+        eprintln!("error: catalog incomplete vs parity target");
         std::process::exit(1);
     }
     println!("PASS");
+}
+
+fn dropin_parity_cmd() {
+    println!("=== dropin-parity: advertised open-stack name coverage ===");
+    dropin_catalog_cmd();
+    let mut by_kind: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for s in DROP_IN_CATALOG {
+        *by_kind.entry(s.kind).or_default() += 1;
+    }
+    for (k, n) in by_kind {
+        println!("  {k}: {n}");
+    }
+    println!(
+        "  cuda_entries={} nvml_entries≈{}",
+        hermes_cuda_driver_entry_count(),
+        nvidia_ml::hermes_nvml_entry_count()
+    );
+    println!(
+        "parity: {}% ({} of {} named surfaces)",
+        drop_in_parity_percent(),
+        drop_in_catalog_len(),
+        DROP_IN_PARITY_TARGET
+    );
+    if !drop_in_parity_complete() {
+        std::process::exit(1);
+    }
+    println!("dropin-parity: PASS");
 }
 
 /// Full advertised drop-in contract smoke: catalog + incomplete offline + session promote + multi-surface.
@@ -1183,11 +1214,18 @@ fn dropin_complete_cmd() {
         println!("kmod name ok: {m}");
     }
 
-    // 8) nvidia-modprobe is catalogued (binary built as hermes-ctl target).
+    // 8) Classic bins catalogued.
     assert!(DROP_IN_CATALOG
         .iter()
         .any(|s| s.name == hermes_linux::userspace::NVIDIA_MODPROBE));
-    println!("nvidia-modprobe catalogued: PASS");
+    assert!(DROP_IN_CATALOG
+        .iter()
+        .any(|s| s.name == hermes_linux::userspace::NVIDIA_PERSISTENCED));
+    assert!(DROP_IN_CATALOG
+        .iter()
+        .any(|s| s.name == hermes_linux::userspace::LIB_CUDART));
+    println!("modprobe+persistenced+cudart catalogued: PASS");
+    dropin_parity_cmd();
 
     // 9) CUDA primary + Mesa GL string after Online.
     hermes_cuda::hermes_cuda_set_gsp_online(true);

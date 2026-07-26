@@ -10,13 +10,13 @@ use nvidia_ml::{
     hermes_nvml_bind_sim_online_session, hermes_nvml_brand_name, hermes_nvml_discover_host_gpus,
     hermes_nvml_format_device_line, hermes_nvml_format_process_lines, hermes_nvml_gpu_count,
     hermes_nvml_gpu_phase, hermes_nvml_promote_first_sim_online, hermes_nvml_register_process,
-    hermes_nvml_reset, nvmlDeviceGetBrand, nvmlDeviceGetCount_v2,
-    nvmlDeviceGetCudaComputeCapability, nvmlDeviceGetEnforcedPowerLimit, nvmlDeviceGetFanSpeed,
-    nvmlDeviceGetHandleByIndex_v2, nvmlDeviceGetMemoryInfo, nvmlDeviceGetName,
-    nvmlDeviceGetPCIBusId, nvmlDeviceGetPersistenceMode, nvmlDeviceGetPowerUsage,
-    nvmlDeviceGetTemperature, nvmlDeviceGetUtilizationRates, nvmlInit_v2, nvmlShutdown,
-    nvmlSystemGetCudaDriverVersion_v2, nvmlSystemGetDriverVersion, NvmlMemory_t,
-    NvmlUtilization_t, NVML_SUCCESS,
+    hermes_nvml_reset, nvmlDeviceGetArchitecture, nvmlDeviceGetBrand, nvmlDeviceGetClockInfo,
+    nvmlDeviceGetCount_v2, nvmlDeviceGetCudaComputeCapability, nvmlDeviceGetEnforcedPowerLimit,
+    nvmlDeviceGetFanSpeed, nvmlDeviceGetHandleByIndex_v2, nvmlDeviceGetMemoryInfo,
+    nvmlDeviceGetName, nvmlDeviceGetPCIBusId, nvmlDeviceGetPersistenceMode,
+    nvmlDeviceGetPowerUsage, nvmlDeviceGetTemperature, nvmlDeviceGetUtilizationRates,
+    nvmlInit_v2, nvmlShutdown, nvmlSystemGetCudaDriverVersion_v2, nvmlSystemGetDriverVersion,
+    NvmlMemory_t, NvmlUtilization_t, NVML_CLOCK_GRAPHICS, NVML_CLOCK_MEM, NVML_SUCCESS,
 };
 
 fn cstr_buf(buf: &[i8]) -> String {
@@ -330,6 +330,42 @@ fn query_one_field(h: u64, field: &str, online: bool, units: bool) -> String {
             let mut min = 0i32;
             if nvmlDeviceGetCudaComputeCapability(h, &mut maj, &mut min) == NVML_SUCCESS {
                 format!("{maj}.{min}")
+            } else {
+                na.into()
+            }
+        }
+        "clocks.current.graphics" | "clocks.gr" => {
+            if !online {
+                return na.into();
+            }
+            let mut mhz = 0u32;
+            if nvmlDeviceGetClockInfo(h, NVML_CLOCK_GRAPHICS, &mut mhz) == NVML_SUCCESS {
+                format!("{mhz}")
+            } else {
+                na.into()
+            }
+        }
+        "clocks.current.memory" | "clocks.mem" => {
+            if !online {
+                return na.into();
+            }
+            let mut mhz = 0u32;
+            if nvmlDeviceGetClockInfo(h, NVML_CLOCK_MEM, &mut mhz) == NVML_SUCCESS {
+                format!("{mhz}")
+            } else {
+                na.into()
+            }
+        }
+        "architecture" | "arch" => {
+            let mut a = 0u32;
+            if nvmlDeviceGetArchitecture(h, &mut a) == NVML_SUCCESS {
+                match a {
+                    6 => "Turing".into(),
+                    7 => "Ampere".into(),
+                    8 => "Ada".into(),
+                    9 => "Hopper".into(),
+                    _ => format!("{a}"),
+                }
             } else {
                 na.into()
             }

@@ -59,6 +59,14 @@ struct DeviceBuffer {
 }
 
 #[derive(Clone, Debug)]
+struct HostBuffer {
+    #[allow(dead_code)]
+    id: u64,
+    /// Boxed so as_mut_ptr stays stable when HostBuffer moves in the Vec.
+    data: Box<[u8]>,
+}
+
+#[derive(Clone, Debug)]
 struct Module {
     id: u64,
     ctx: u64,
@@ -99,6 +107,7 @@ struct CudaState {
     /// Stack of current contexts (top = `cuCtxGetCurrent`).
     current_stack: Vec<u64>,
     buffers: Vec<DeviceBuffer>,
+    host_buffers: Vec<HostBuffer>,
     modules: Vec<Module>,
     functions: Vec<Function>,
     streams: Vec<Stream>,
@@ -115,6 +124,7 @@ static STATE: Mutex<CudaState> = Mutex::new(CudaState {
     contexts: Vec::new(),
     current_stack: Vec::new(),
     buffers: Vec::new(),
+    host_buffers: Vec::new(),
     modules: Vec::new(),
     functions: Vec::new(),
     streams: Vec::new(),
@@ -152,6 +162,7 @@ pub fn hermes_cuda_set_gsp_online(online: bool) {
             s.contexts.clear();
             s.current_stack.clear();
             s.buffers.clear();
+            s.host_buffers.clear();
             s.modules.clear();
             s.functions.clear();
             s.streams.clear();
@@ -210,6 +221,7 @@ pub fn hermes_cuda_reset() {
         s.contexts.clear();
         s.current_stack.clear();
         s.buffers.clear();
+        s.host_buffers.clear();
         s.modules.clear();
         s.functions.clear();
         s.streams.clear();
@@ -896,6 +908,140 @@ pub extern "C" fn cuCtxDisablePeerAccess(peer_device: i32) -> CudaResult {
 /// Hermes helper: true when peer access is enabled for (device, peer).
 pub fn hermes_cuda_peer_enabled(device: u32, peer: u32) -> bool {
     with_state(|s| s.peer_enabled.contains(&(device, peer)))
+}
+
+/// Page-locked host allocation (software pin — stable Box heap pointer).
+#[no_mangle]
+pub extern "C" fn cuMemHostAlloc(pp: *mut *mut u8, bytesize: usize, _flags: u32) -> CudaResult {
+    if pp.is_null() || bytesize == 0 {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    with_state(|s| {
+        let g = require_gsp(s);
+        if g != CUDA_SUCCESS {
+            return g;
+        }
+        if !s.driver_init {
+            return CUDA_ERROR_NOT_INITIALIZED;
+        }
+        let id = next_id(s);
+        let mut data = vec![0u8; bytesize].into_boxed_slice();
+        let ptr = data.as_mut_ptr();
+        s.host_buffers.push(HostBuffer { id, data });
+        unsafe {
+            *pp = ptr;
+        }
+        let _ = id;
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cuMemFreeHost(p: *mut u8) -> CudaResult {
+    if p.is_null() {
+        return CUDA_SUCCESS;
+    }
+    with_state(|s| {
+        let before = s.host_buffers.len();
+        s.host_buffers.retain(|b| b.data.as_ptr() as *mut u8 != p);
+        if s.host_buffers.len() == before {
+            CUDA_ERROR_INVALID_VALUE
+        } else {
+            CUDA_SUCCESS
+        }
+    })
+}
+
+/// Peer device-to-device copy (requires EnablePeerAccess when multi-device).
+#[no_mangle]
+pub extern "C" fn cuMemcpyPeer(
+    dst: u64,
+    dst_device: i32,
+    src: u64,
+    src_device: i32,
+    bytes: usize,
+) -> CudaResult {
+    if bytes == 0 {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    with_state(|s| {
+        let g = require_gsp(s);
+        if g != CUDA_SUCCESS {
+            return g;
+        }
+        if src_device < 0
+            || dst_device < 0
+            || src_device as usize >= s.devices.len()
+            || dst_device as usize >= s.devices.len()
+        {
+            return CUDA_ERROR_INVALID_DEVICE;
+        }
+        if src_device != dst_device
+            && !s
+                .peer_enabled
+                .contains(&(src_device as u32, dst_device as u32))
+            && !s
+                .peer_enabled
+                .contains(&(dst_device as u32, src_device as u32))
+        {
+            // Same-device always ok; cross-device needs peer enable.
+            return CUDA_ERROR_NOT_SUPPORTED;
+        }
+        let src_idx = match s.buffers.iter().position(|b| b.id == src) {
+            Some(i) => i,
+            None => return CUDA_ERROR_INVALID_VALUE,
+        };
+        let dst_idx = match s.buffers.iter().position(|b| b.id == dst) {
+            Some(i) => i,
+            None => return CUDA_ERROR_INVALID_VALUE,
+        };
+        if bytes > s.buffers[src_idx].bytes || bytes > s.buffers[dst_idx].bytes {
+            return CUDA_ERROR_INVALID_VALUE;
+        }
+        let tmp = s.buffers[src_idx].data[..bytes].to_vec();
+        s.buffers[dst_idx].data[..bytes].copy_from_slice(&tmp);
+        CUDA_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn cudaHostAlloc(p_host: *mut *mut u8, size: usize, flags: u32) -> CudaResult {
+    cuMemHostAlloc(p_host, size, flags)
+}
+
+#[no_mangle]
+pub extern "C" fn cudaFreeHost(ptr: *mut u8) -> CudaResult {
+    cuMemFreeHost(ptr)
+}
+
+#[no_mangle]
+pub extern "C" fn cudaDeviceCanAccessPeer(
+    can_access: *mut i32,
+    device: i32,
+    peer_device: i32,
+) -> CudaResult {
+    cuDeviceCanAccessPeer(can_access, device, peer_device)
+}
+
+#[no_mangle]
+pub extern "C" fn cudaDeviceEnablePeerAccess(peer_device: i32, flags: u32) -> CudaResult {
+    cuCtxEnablePeerAccess(peer_device, flags)
+}
+
+#[no_mangle]
+pub extern "C" fn cudaDeviceDisablePeerAccess(peer_device: i32) -> CudaResult {
+    cuCtxDisablePeerAccess(peer_device)
+}
+
+#[no_mangle]
+pub extern "C" fn cudaMemcpyPeer(
+    dst: u64,
+    dst_device: i32,
+    src: u64,
+    src_device: i32,
+    count: usize,
+) -> CudaResult {
+    cuMemcpyPeer(dst, dst_device, src, src_device, count)
 }
 
 #[no_mangle]
@@ -1656,8 +1802,8 @@ pub extern "C" fn cudaRuntimeGetVersion(runtime_version: *mut i32) -> CudaResult
 
 /// Count of driver entry points Hermes currently exports (for drop-in dashboards).
 pub fn hermes_cuda_driver_entry_count() -> usize {
-    // + peer access APIs
-    55
+    // + host alloc, peer memcpy, runtime peer
+    62
 }
 
 pub fn hermes_cuda_host_sort_i32(data: &mut [i32]) {
@@ -2005,5 +2151,34 @@ mod tests {
             cuDeviceCanAccessPeer(&mut can, 0, 1),
             CUDA_ERROR_HERMES_GSP_OFFLINE
         );
+    }
+
+    #[test]
+    fn host_alloc_and_same_device_peer_copy() {
+        let _g = TEST_LOCK.lock().unwrap();
+        hermes_cuda_reset();
+        hermes_cuda_set_gsp_online(true);
+        assert_eq!(cuInit(0), CUDA_SUCCESS);
+        let mut ctx = 0u64;
+        assert_eq!(cuCtxCreate_v2(&mut ctx, 0, 0), CUDA_SUCCESS);
+        let mut hp: *mut u8 = core::ptr::null_mut();
+        assert_eq!(cuMemHostAlloc(&mut hp, 16, 0), CUDA_SUCCESS);
+        assert!(!hp.is_null());
+        unsafe {
+            for i in 0..16 {
+                *hp.add(i) = i as u8;
+            }
+        }
+        let mut a = 0u64;
+        let mut b = 0u64;
+        assert_eq!(cuMemAlloc_v2(&mut a, 16), CUDA_SUCCESS);
+        assert_eq!(cuMemAlloc_v2(&mut b, 16), CUDA_SUCCESS);
+        assert_eq!(cuMemcpyHtoD_v2(a, hp, 16), CUDA_SUCCESS);
+        assert_eq!(cuMemcpyPeer(b, 0, a, 0, 16), CUDA_SUCCESS);
+        let mut out = [0u8; 16];
+        assert_eq!(cuMemcpyDtoH_v2(out.as_mut_ptr(), b, 16), CUDA_SUCCESS);
+        assert_eq!(out[15], 15);
+        assert_eq!(cuMemFreeHost(hp), CUDA_SUCCESS);
+        hermes_cuda_reset();
     }
 }

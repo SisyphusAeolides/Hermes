@@ -65,9 +65,12 @@ pub mod userspace {
     pub const NVIDIA_SETTINGS: &str = "nvidia-settings";
     pub const NVIDIA_SMI: &str = "nvidia-smi";
     pub const NVIDIA_MODPROBE: &str = "nvidia-modprobe";
+    pub const NVIDIA_PERSISTENCED: &str = "nvidia-persistenced";
     pub const LIB_NVIDIA_ML: &str = "libnvidia-ml.so.1";
     pub const LIB_CUDA: &str = "libcuda.so.1";
+    pub const LIB_CUDART: &str = "libcudart.so.12";
     pub const LIB_GLX_NVIDIA: &str = "libGLX_nvidia.so.0";
+    pub const LIB_EGL_NVIDIA: &str = "libEGL_nvidia.so.0";
 }
 
 /// Drop-in module table entry.
@@ -158,12 +161,22 @@ pub const DROP_IN_CATALOG: &[DropInSurface] = &[
     },
     DropInSurface {
         kind: "device",
+        name: devices::NVIDIA_UVM_TOOLS,
+        hermes_crate: "linux/kmod",
+    },
+    DropInSurface {
+        kind: "device",
         name: devices::NVIDIA_MODESET,
         hermes_crate: "linux/kmod",
     },
     DropInSurface {
         kind: "device",
         name: "/dev/nvidia-drm",
+        hermes_crate: "linux/kmod",
+    },
+    DropInSurface {
+        kind: "device",
+        name: devices::NVIDIA_CAPS,
         hermes_crate: "linux/kmod",
     },
     DropInSurface {
@@ -182,6 +195,11 @@ pub const DROP_IN_CATALOG: &[DropInSurface] = &[
         hermes_crate: "hermes-ctl",
     },
     DropInSurface {
+        kind: "bin",
+        name: userspace::NVIDIA_PERSISTENCED,
+        hermes_crate: "hermes-ctl",
+    },
+    DropInSurface {
         kind: "lib",
         name: userspace::LIB_NVIDIA_ML,
         hermes_crate: "hermes-nvml",
@@ -193,7 +211,17 @@ pub const DROP_IN_CATALOG: &[DropInSurface] = &[
     },
     DropInSurface {
         kind: "lib",
+        name: userspace::LIB_CUDART,
+        hermes_crate: "hermes-cuda",
+    },
+    DropInSurface {
+        kind: "lib",
         name: userspace::LIB_GLX_NVIDIA,
+        hermes_crate: "hermes-mesa",
+    },
+    DropInSurface {
+        kind: "lib",
+        name: userspace::LIB_EGL_NVIDIA,
         hermes_crate: "hermes-mesa",
     },
     DropInSurface {
@@ -206,11 +234,34 @@ pub const DROP_IN_CATALOG: &[DropInSurface] = &[
         name: "Mesa Vulkan/GL",
         hermes_crate: "hermes-mesa",
     },
+    DropInSurface {
+        kind: "surface",
+        name: "CCCL/Thrust host",
+        hermes_crate: "hermes-cccl",
+    },
 ];
 
 /// Number of catalog entries (kmod + device + bin + lib + surface).
 pub fn drop_in_catalog_len() -> usize {
     DROP_IN_CATALOG.len()
+}
+
+/// Target count of classic open-stack named surfaces Hermes advertises.
+pub const DROP_IN_PARITY_TARGET: usize = 24;
+
+/// Percent of parity target covered by the live catalog (capped at 100).
+pub fn drop_in_parity_percent() -> u32 {
+    let n = DROP_IN_CATALOG.len();
+    if n >= DROP_IN_PARITY_TARGET {
+        100
+    } else {
+        ((n * 100) / DROP_IN_PARITY_TARGET) as u32
+    }
+}
+
+/// True when catalog hits the advertised parity target count.
+pub fn drop_in_parity_complete() -> bool {
+    DROP_IN_CATALOG.len() >= DROP_IN_PARITY_TARGET
 }
 
 /// True when every classic open-gpu-kernel-modules module name is catalogued.
@@ -323,7 +374,9 @@ mod tests {
 
     #[test]
     fn drop_in_catalog_covers_advertised_stack() {
-        assert!(drop_in_catalog_len() >= 15);
+        assert!(drop_in_catalog_len() >= DROP_IN_PARITY_TARGET);
+        assert!(drop_in_parity_complete());
+        assert_eq!(drop_in_parity_percent(), 100);
         assert!(drop_in_has_all_kmod_names());
         assert!(DROP_IN_CATALOG
             .iter()
@@ -336,10 +389,22 @@ mod tests {
             .any(|s| s.name == userspace::NVIDIA_MODPROBE));
         assert!(DROP_IN_CATALOG
             .iter()
+            .any(|s| s.name == userspace::NVIDIA_PERSISTENCED));
+        assert!(DROP_IN_CATALOG
+            .iter()
             .any(|s| s.name == userspace::LIB_CUDA));
         assert!(DROP_IN_CATALOG
             .iter()
+            .any(|s| s.name == userspace::LIB_CUDART));
+        assert!(DROP_IN_CATALOG
+            .iter()
+            .any(|s| s.name == userspace::LIB_EGL_NVIDIA));
+        assert!(DROP_IN_CATALOG
+            .iter()
             .any(|s| s.name == devices::NVIDIA_CTL));
+        assert!(DROP_IN_CATALOG
+            .iter()
+            .any(|s| s.name == devices::NVIDIA_UVM_TOOLS));
         assert!(DROP_IN_CATALOG.iter().any(|s| s.name == "/dev/nvidia-drm"));
         let kinds: alloc::vec::Vec<_> = DROP_IN_CATALOG.iter().map(|s| s.kind).collect();
         for need in ["kmod", "device", "bin", "lib", "surface"] {

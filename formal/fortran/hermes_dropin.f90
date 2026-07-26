@@ -40,8 +40,8 @@ contains
   end function telemetry_legal
 
   pure integer(i32) function catalog_size() result(n)
-    ! kmod×5 + device×5 + bin×3 + lib×3 + surface×2 = 18 (matches DROP_IN_CATALOG)
-    n = 18
+    ! Matches hermes_linux::DROP_IN_PARITY_TARGET / DROP_IN_CATALOG length.
+    n = 24
   end function catalog_size
 
   pure type(session_t) function close_session(s_in) result(s)

@@ -26,7 +26,7 @@ mkdir -p \
   "$PREFIX/share/glvnd/egl_vendor.d"
 
 # Binaries (classic NVIDIA names + Hermes control)
-for b in hermes-ctl nvidia-smi nvidia-settings hermes-settings nvidia-modprobe; do
+for b in hermes-ctl nvidia-smi nvidia-settings hermes-settings nvidia-modprobe nvidia-persistenced; do
   if [ -f "$TARGET/$b" ]; then
     install -m 0755 "$TARGET/$b" "$PREFIX/bin/$b"
     printf '  bin/%s\n' "$b"
@@ -69,7 +69,9 @@ if [ -n "$cu" ]; then
   base=$(basename "$cu")
   ln -sfn "$base" "$PREFIX/lib/libcuda.so.1"
   ln -sfn "$base" "$PREFIX/lib/libcuda.so"
-  printf '  lib/libcuda.so.1 -> %s\n' "$base"
+  ln -sfn "$base" "$PREFIX/lib/libcudart.so.12"
+  ln -sfn "$base" "$PREFIX/lib/libcudart.so"
+  printf '  lib/libcuda.so.1 + libcudart.so.12 -> %s\n' "$base"
 fi
 
 # Vulkan ICD JSON
@@ -110,13 +112,14 @@ fi
 cat >"$PREFIX/share/hermes/DROPIN_MANIFEST.txt" <<EOF
 Hermes drop-in stage
 prefix=$PREFIX
-bins=hermes-ctl,nvidia-smi,nvidia-settings,nvidia-modprobe
-libs=libnvidia-ml.so.1,libcuda.so.1,libGLX_nvidia.so.0,libEGL_nvidia.so.0
+bins=hermes-ctl,nvidia-smi,nvidia-settings,nvidia-modprobe,nvidia-persistenced
+libs=libnvidia-ml.so.1,libcuda.so.1,libcudart.so.12,libGLX_nvidia.so.0,libEGL_nvidia.so.0
 modules=linux/kmod (nvidia, nvidia-modeset, nvidia-uvm, nvidia-drm, nvidia-peermem)
 note=GSP Online is never implied by staging binaries
 firmware=stage separately via scripts/stage-gsp-rm.sh or stage-linux-firmware-gsp.sh
 device=/dev/nvidia* via kmod + nvidia-modprobe --status / -c
 modprobe=$PREFIX/bin/nvidia-modprobe --status
+persistenced=$PREFIX/bin/nvidia-persistenced --verbose
 EOF
 
 printf 'done. Load kmods from linux/kmod after make. Export:\n'

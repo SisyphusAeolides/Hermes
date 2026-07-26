@@ -7,8 +7,12 @@ Full catalog (source of truth in `hermes_linux::DROP_IN_CATALOG`):
 
 ```sh
 cargo run -p hermes-ctl --bin hermes-ctl -- dropin-catalog
+cargo run -p hermes-ctl --bin hermes-ctl -- dropin-parity
 cargo run -p hermes-ctl --bin hermes-ctl -- dropin-complete
 ```
+
+`dropin-parity` reports named-surface coverage against `DROP_IN_PARITY_TARGET`
+(currently **24** catalog entries = 100% of the advertised open-stack name set).
 
 | Component | Role |
 |---|---|
@@ -20,7 +24,10 @@ cargo run -p hermes-ctl --bin hermes-ctl -- dropin-complete
 | `nvidia-settings` | GUI/CLI control |
 | `nvidia-smi` / NVML | Management queries |
 | `nvidia-modprobe` | Module/device helper (fail-closed status + load) |
-| `/dev/nvidia*` | Character devices |
+| `nvidia-persistenced` | Persistence mode helper via NVML |
+| `libcuda.so.1` / `libcudart.so.12` | CUDA driver + runtime sonames |
+| `libGLX_nvidia` / `libEGL_nvidia` | Mesa GL/EGL sonames |
+| `/dev/nvidia*` | Character devices (incl. uvm-tools, caps, drm) |
 
 Hermes provides personalities and userspace binaries under those names. Binding
 a name does not mark the GPU Online; the manifold gates still apply.
@@ -99,6 +106,23 @@ cargo run -p hermes-ctl --bin nvidia-modprobe -- -u --verbose
 Reports module/device presence honestly. Load attempts use `modprobe`/`insmod`
 and never claim GSP Online. Device node creation refuses forged majors when the
 kernel has not registered an `nvidia` char device.
+
+### nvidia-persistenced
+
+```sh
+cargo run -p hermes-ctl --bin nvidia-persistenced -- --verbose
+cargo run -p hermes-ctl --bin nvidia-persistenced -- --no-persistence-mode
+```
+
+Sets NVML persistence mode on discovered host GPUs. Does not invent Online.
+
+### Query clocks / architecture
+
+```sh
+nvidia-smi --hermes-sim-online \
+  --query-gpu=name,architecture,clocks.current.graphics,clocks.current.memory \
+  --format=csv
+```
 
 ### Stage prefix
 

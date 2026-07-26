@@ -919,6 +919,252 @@ pub extern "C" fn nvmlDeviceGetFanSpeed_v2(
     nvmlDeviceGetFanSpeed(device, speed)
 }
 
+/// Clock types (subset of nvmlClockType_t).
+pub const NVML_CLOCK_GRAPHICS: u32 = 0;
+pub const NVML_CLOCK_SM: u32 = 1;
+pub const NVML_CLOCK_MEM: u32 = 2;
+pub const NVML_CLOCK_VIDEO: u32 = 3;
+
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetClockInfo(
+    device: NvmlDevice_t,
+    clock_type: u32,
+    clock_mhz: *mut u32,
+) -> NvmlReturn {
+    if clock_mhz.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        let idx = match handle_to_index(device) {
+            Some(i) if i < s.gpus.len() => i,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        if !s.gpus[idx].manifold.is_online() {
+            return NVML_ERROR_NOT_SUPPORTED;
+        }
+        let mhz = match clock_type {
+            NVML_CLOCK_GRAPHICS => 1395,
+            NVML_CLOCK_SM => 1395,
+            NVML_CLOCK_MEM => 5001,
+            NVML_CLOCK_VIDEO => 1200,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        unsafe {
+            *clock_mhz = mhz;
+        }
+        NVML_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetMaxClockInfo(
+    device: NvmlDevice_t,
+    clock_type: u32,
+    clock_mhz: *mut u32,
+) -> NvmlReturn {
+    if clock_mhz.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        let idx = match handle_to_index(device) {
+            Some(i) if i < s.gpus.len() => i,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        // Max clocks are identity, not a live tachometer claim.
+        let _ = &s.gpus[idx];
+        let mhz = match clock_type {
+            NVML_CLOCK_GRAPHICS => 1590,
+            NVML_CLOCK_SM => 1590,
+            NVML_CLOCK_MEM => 5001,
+            NVML_CLOCK_VIDEO => 1500,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        unsafe {
+            *clock_mhz = mhz;
+        }
+        NVML_SUCCESS
+    })
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NvmlBAR1Memory_t {
+    pub bar1_total: u64,
+    pub bar1_free: u64,
+    pub bar1_used: u64,
+}
+
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetBAR1MemoryInfo(
+    device: NvmlDevice_t,
+    bar1: *mut NvmlBAR1Memory_t,
+) -> NvmlReturn {
+    if bar1.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        let idx = match handle_to_index(device) {
+            Some(i) if i < s.gpus.len() => i,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        let total = 256 * 1024 * 1024u64; // typical BAR1 aperture shell
+        let online = s.gpus[idx].manifold.is_online();
+        let (free, used) = if online {
+            (total / 2, total / 2)
+        } else {
+            (0, 0)
+        };
+        unsafe {
+            *bar1 = NvmlBAR1Memory_t {
+                bar1_total: total,
+                bar1_free: free,
+                bar1_used: used,
+            };
+        }
+        NVML_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetEccMode(
+    device: NvmlDevice_t,
+    current: *mut u32,
+    pending: *mut u32,
+) -> NvmlReturn {
+    if current.is_null() || pending.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        if handle_to_index(device).map(|i| i < s.gpus.len()) != Some(true) {
+            return NVML_ERROR_INVALID_ARGUMENT;
+        }
+        // Workstation T1000-class: ECC disabled / not present.
+        unsafe {
+            *current = 0;
+            *pending = 0;
+        }
+        NVML_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetIndex(device: NvmlDevice_t, index: *mut u32) -> NvmlReturn {
+    if index.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    match handle_to_index(device) {
+        Some(i) => {
+            unsafe {
+                *index = i as u32;
+            }
+            NVML_SUCCESS
+        }
+        None => NVML_ERROR_INVALID_ARGUMENT,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetSerial(
+    device: NvmlDevice_t,
+    serial: *mut i8,
+    length: u32,
+) -> NvmlReturn {
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        let idx = match handle_to_index(device) {
+            Some(i) if i < s.gpus.len() => i,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        // Synthetic serial from bus id — not a forged factory serial claim.
+        let srl = format!("HERMES-{}", s.gpus[idx].pci_bus_id.replace(':', ""));
+        copy_str(&srl, serial, length)
+    })
+}
+
+/// Architecture enum subset (nvmlDeviceArchitecture_t).
+pub const NVML_DEVICE_ARCH_KEPLER: u32 = 2;
+pub const NVML_DEVICE_ARCH_MAXWELL: u32 = 3;
+pub const NVML_DEVICE_ARCH_PASCAL: u32 = 4;
+pub const NVML_DEVICE_ARCH_VOLTA: u32 = 5;
+pub const NVML_DEVICE_ARCH_TURING: u32 = 6;
+pub const NVML_DEVICE_ARCH_AMPERE: u32 = 7;
+pub const NVML_DEVICE_ARCH_ADA: u32 = 8;
+pub const NVML_DEVICE_ARCH_HOPPER: u32 = 9;
+pub const NVML_DEVICE_ARCH_UNKNOWN: u32 = 0xffffffff;
+
+fn arch_for_device(device_id: u16) -> u32 {
+    match device_id {
+        d if (0x1e00..=0x1fff).contains(&d) => NVML_DEVICE_ARCH_TURING,
+        d if (0x2200..=0x25ff).contains(&d) => NVML_DEVICE_ARCH_AMPERE,
+        d if (0x2600..=0x28ff).contains(&d) => NVML_DEVICE_ARCH_ADA,
+        d if (0x2300..=0x23ff).contains(&d) || (0x2900..=0x2fff).contains(&d) => {
+            NVML_DEVICE_ARCH_HOPPER
+        }
+        _ => NVML_DEVICE_ARCH_TURING,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn nvmlDeviceGetArchitecture(
+    device: NvmlDevice_t,
+    arch: *mut u32,
+) -> NvmlReturn {
+    if arch.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        let idx = match handle_to_index(device) {
+            Some(i) if i < s.gpus.len() => i,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        unsafe {
+            *arch = arch_for_device(s.gpus[idx].device_id);
+        }
+        NVML_SUCCESS
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn nvmlDeviceSetPersistenceMode(
+    device: NvmlDevice_t,
+    mode: u32,
+) -> NvmlReturn {
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        let idx = match handle_to_index(device) {
+            Some(i) if i < s.gpus.len() => i,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        // Persistence is a session flag; does not invent Online.
+        s.gpus[idx].persistence_mode = mode != 0;
+        NVML_SUCCESS
+    })
+}
+
+/// Entry-point count for drop-in dashboards.
+pub fn hermes_nvml_entry_count() -> usize {
+    40
+}
+
 #[no_mangle]
 pub extern "C" fn nvmlSystemGetDriverVersion(buffer: *mut i8, length: u32) -> NvmlReturn {
     copy_cstr(b"Hermes-GSP 0.1.0\0", buffer, length)
@@ -1090,6 +1336,33 @@ mod tests {
         assert_eq!(nvmlDeviceGetHandleByIndex_v2(0, &mut h), NVML_SUCCESS);
         let mut fan = 0u32;
         assert_eq!(nvmlDeviceGetFanSpeed(h, &mut fan), NVML_ERROR_NOT_SUPPORTED);
+        hermes_nvml_reset();
+    }
+
+    #[test]
+    fn clocks_bar1_arch_persistence() {
+        let _g = TEST_LOCK.lock().unwrap();
+        hermes_nvml_reset();
+        assert!(hermes_nvml_bind_sim_online_session("Hermes T1000"));
+        let mut h = 0u64;
+        assert_eq!(nvmlDeviceGetHandleByIndex_v2(0, &mut h), NVML_SUCCESS);
+        let mut mhz = 0u32;
+        assert_eq!(
+            nvmlDeviceGetClockInfo(h, NVML_CLOCK_GRAPHICS, &mut mhz),
+            NVML_SUCCESS
+        );
+        assert!(mhz > 0);
+        let mut bar = NvmlBAR1Memory_t::default();
+        assert_eq!(nvmlDeviceGetBAR1MemoryInfo(h, &mut bar), NVML_SUCCESS);
+        assert!(bar.bar1_total > 0);
+        let mut arch = 0u32;
+        assert_eq!(nvmlDeviceGetArchitecture(h, &mut arch), NVML_SUCCESS);
+        assert_eq!(arch, NVML_DEVICE_ARCH_TURING);
+        assert_eq!(nvmlDeviceSetPersistenceMode(h, 1), NVML_SUCCESS);
+        let mut mode = 0u32;
+        assert_eq!(nvmlDeviceGetPersistenceMode(h, &mut mode), NVML_SUCCESS);
+        assert_eq!(mode, 1);
+        assert!(hermes_nvml_entry_count() >= 30);
         hermes_nvml_reset();
     }
 
