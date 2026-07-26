@@ -10,11 +10,11 @@ use hermes_core::{
 use hermes_gsp::{firmware_family_for_device, FirmwareFamily, NVIDIA_GSP_RM_610_43_03};
 use hermes_linux::{devices, drop_in_module_name, modules, userspace, MODULE_SURFACES};
 use nvidia_ml::{
-    hermes_nvml_discover_host_gpus, hermes_nvml_format_device_line, hermes_nvml_gpu_count,
-    hermes_nvml_gpu_phase, hermes_nvml_promote_first_sim_online, hermes_nvml_reset,
-    nvmlDeviceGetCount_v2, nvmlDeviceGetHandleByIndex_v2, nvmlDeviceGetMemoryInfo,
-    nvmlDeviceGetName, nvmlDeviceGetPCIBusId, nvmlInit_v2, nvmlShutdown, NvmlMemory_t,
-    NVML_SUCCESS,
+    hermes_nvml_brand_name, hermes_nvml_discover_host_gpus, hermes_nvml_format_device_line,
+    hermes_nvml_gpu_count, hermes_nvml_gpu_phase, hermes_nvml_promote_first_sim_online,
+    hermes_nvml_reset, nvmlDeviceGetBrand, nvmlDeviceGetCount_v2, nvmlDeviceGetHandleByIndex_v2,
+    nvmlDeviceGetMemoryInfo, nvmlDeviceGetName, nvmlDeviceGetPCIBusId, nvmlInit_v2, nvmlShutdown,
+    NvmlMemory_t, NVML_SUCCESS,
 };
 
 fn main() {
@@ -137,11 +137,17 @@ fn query(attr: &str, sim_online: bool) {
                     used: 0,
                 };
                 assert_eq!(nvmlDeviceGetMemoryInfo(h, &mut mem), NVML_SUCCESS);
+                let mut brand = 0u32;
+                let brand_s = if nvmlDeviceGetBrand(h, &mut brand) == NVML_SUCCESS {
+                    hermes_nvml_brand_name(brand)
+                } else {
+                    "?"
+                };
                 let phase = hermes_nvml_gpu_phase(i as usize)
                     .map(|p| p.label())
                     .unwrap_or("?");
                 println!(
-                    "  {{ index: {i}, name: \"{}\", bus: \"{}\", phase: \"{phase}\", mem_mib: {} }}",
+                    "  {{ index: {i}, name: \"{}\", bus: \"{}\", phase: \"{phase}\", brand: \"{brand_s}\", mem_mib: {} }}",
                     cstr(&name),
                     cstr(&bus),
                     mem.total / (1024 * 1024)

@@ -134,6 +134,33 @@ impl DrmDevice {
     pub fn destroy_dumb(&mut self, handle: u32) -> Result<(), DrmError> {
         self.gems.destroy(handle).map_err(DrmError::Gem)
     }
+
+    pub fn gem_flink(&mut self, handle: u32) -> Result<u32, DrmError> {
+        self.gems
+            .flink(self.gsp_online, handle)
+            .map_err(DrmError::Gem)
+    }
+
+    pub fn gem_open_name(&mut self, name: u32) -> Result<u32, DrmError> {
+        self.gems
+            .open_name(self.gsp_online, name)
+            .map_err(DrmError::Gem)
+    }
+
+    pub fn gem_prime_export(
+        &mut self,
+        handle: u32,
+    ) -> Result<crate::gem::PrimeExport, DrmError> {
+        self.gems
+            .prime_export(self.gsp_online, handle)
+            .map_err(DrmError::Gem)
+    }
+
+    pub fn gem_prime_import(&mut self, token: u64) -> Result<u32, DrmError> {
+        self.gems
+            .prime_import(self.gsp_online, token)
+            .map_err(DrmError::Gem)
+    }
 }
 
 #[cfg(test)]

@@ -7,10 +7,11 @@
 use hermes_core::HermesPhase;
 // Crate package hermes-nvml exports library name `nvidia_ml`.
 use nvidia_ml::{
-    hermes_nvml_bind_sim_online_session, hermes_nvml_discover_host_gpus,
+    hermes_nvml_bind_sim_online_session, hermes_nvml_brand_name, hermes_nvml_discover_host_gpus,
     hermes_nvml_format_device_line, hermes_nvml_format_process_lines, hermes_nvml_gpu_count,
     hermes_nvml_gpu_phase, hermes_nvml_promote_first_sim_online, hermes_nvml_register_process,
-    hermes_nvml_reset, nvmlDeviceGetCount_v2, nvmlDeviceGetCudaComputeCapability,
+    hermes_nvml_reset, nvmlDeviceGetBrand, nvmlDeviceGetCount_v2,
+    nvmlDeviceGetCudaComputeCapability, nvmlDeviceGetEnforcedPowerLimit, nvmlDeviceGetFanSpeed,
     nvmlDeviceGetHandleByIndex_v2, nvmlDeviceGetMemoryInfo, nvmlDeviceGetName,
     nvmlDeviceGetPCIBusId, nvmlDeviceGetPersistenceMode, nvmlDeviceGetPowerUsage,
     nvmlDeviceGetTemperature, nvmlDeviceGetUtilizationRates, nvmlInit_v2, nvmlShutdown,
@@ -72,8 +73,13 @@ fn main() {
         return;
     }
 
-    if args.iter().any(|a| a == "--query-gpu=name" || a == "--query-gpu") {
-        query_names();
+    if let Some(q) = args.iter().find_map(|a| a.strip_prefix("--query-gpu=")) {
+        query_gpu_fields(q);
+        let _ = nvmlShutdown();
+        return;
+    }
+    if args.iter().any(|a| a == "--query-gpu") {
+        query_gpu_fields("name");
         let _ = nvmlShutdown();
         return;
     }
@@ -88,7 +94,7 @@ fn print_help() {
          Usage:\n\
            nvidia-smi                 Summary table from NVML session state\n\
            nvidia-smi -L              List GPUs\n\
-           nvidia-smi --query-gpu=name\n\
+           nvidia-smi --query-gpu=name,temperature.gpu,fan.speed,power.draw,memory.total,brand\n\
            nvidia-smi --hermes-sim-online   Promote first GPU with complete-evidence Online\n\
            nvidia-smi --hermes-reset\n\n\
          Devices come from host PCI discovery and/or session binds.\n\
@@ -123,15 +129,152 @@ fn list_gpus() {
     }
 }
 
-fn query_names() {
+/// CSV-ish `--query-gpu=field1,field2` (Hermes subset of classic smi query).
+fn query_gpu_fields(spec: &str) {
+    let fields: Vec<&str> = spec.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    if fields.is_empty() {
+        return;
+    }
+    // Header line (classic smi prints values only for csv mode; we print header for clarity).
+    println!("{}", fields.join(", "));
     let mut count = 0u32;
     assert_eq!(nvmlDeviceGetCount_v2(&mut count), NVML_SUCCESS);
     for i in 0..count {
         let mut h = 0u64;
         assert_eq!(nvmlDeviceGetHandleByIndex_v2(i, &mut h), NVML_SUCCESS);
-        let mut name = [0i8; 96];
-        assert_eq!(nvmlDeviceGetName(h, name.as_mut_ptr(), 96), NVML_SUCCESS);
-        println!("{}", cstr_buf(&name));
+        let online = hermes_nvml_gpu_phase(i as usize) == Some(HermesPhase::Online);
+        let mut cells = Vec::new();
+        for f in &fields {
+            cells.push(query_one_field(h, f, online));
+        }
+        println!("{}", cells.join(", "));
+    }
+}
+
+fn query_one_field(h: u64, field: &str, online: bool) -> String {
+    match field {
+        "name" | "gpu_name" => {
+            let mut name = [0i8; 96];
+            if nvmlDeviceGetName(h, name.as_mut_ptr(), 96) == NVML_SUCCESS {
+                cstr_buf(&name)
+            } else {
+                "[N/A]".into()
+            }
+        }
+        "pci.bus_id" | "bus_id" => {
+            let mut bus = [0i8; 32];
+            if nvmlDeviceGetPCIBusId(h, bus.as_mut_ptr(), 32) == NVML_SUCCESS {
+                cstr_buf(&bus)
+            } else {
+                "[N/A]".into()
+            }
+        }
+        "temperature.gpu" | "temp" => {
+            if !online {
+                return "[N/A]".into();
+            }
+            let mut t = 0u32;
+            if nvmlDeviceGetTemperature(h, 0, &mut t) == NVML_SUCCESS {
+                format!("{t}")
+            } else {
+                "[N/A]".into()
+            }
+        }
+        "fan.speed" | "fan" => {
+            if !online {
+                return "[N/A]".into();
+            }
+            let mut fan = 0u32;
+            if nvmlDeviceGetFanSpeed(h, &mut fan) == NVML_SUCCESS {
+                format!("{fan}")
+            } else {
+                "[N/A]".into()
+            }
+        }
+        "power.draw" | "power" => {
+            if !online {
+                return "[N/A]".into();
+            }
+            let mut mw = 0u32;
+            if nvmlDeviceGetPowerUsage(h, &mut mw) == NVML_SUCCESS {
+                format!("{:.2}", mw as f64 / 1000.0)
+            } else {
+                "[N/A]".into()
+            }
+        }
+        "power.limit" => {
+            let mut lim = 0u32;
+            if nvmlDeviceGetEnforcedPowerLimit(h, &mut lim) == NVML_SUCCESS {
+                format!("{:.0}", lim as f64 / 1000.0)
+            } else {
+                "[N/A]".into()
+            }
+        }
+        "memory.total" => {
+            let mut mem = NvmlMemory_t {
+                total: 0,
+                free: 0,
+                used: 0,
+            };
+            if nvmlDeviceGetMemoryInfo(h, &mut mem) == NVML_SUCCESS {
+                format!("{}", mem.total / (1024 * 1024))
+            } else {
+                "[N/A]".into()
+            }
+        }
+        "memory.used" => {
+            let mut mem = NvmlMemory_t {
+                total: 0,
+                free: 0,
+                used: 0,
+            };
+            if nvmlDeviceGetMemoryInfo(h, &mut mem) == NVML_SUCCESS {
+                format!("{}", mem.used / (1024 * 1024))
+            } else {
+                "[N/A]".into()
+            }
+        }
+        "memory.free" => {
+            let mut mem = NvmlMemory_t {
+                total: 0,
+                free: 0,
+                used: 0,
+            };
+            if nvmlDeviceGetMemoryInfo(h, &mut mem) == NVML_SUCCESS {
+                format!("{}", mem.free / (1024 * 1024))
+            } else {
+                "[N/A]".into()
+            }
+        }
+        "utilization.gpu" => {
+            if !online {
+                return "[N/A]".into();
+            }
+            let mut u = NvmlUtilization_t { gpu: 0, memory: 0 };
+            if nvmlDeviceGetUtilizationRates(h, &mut u) == NVML_SUCCESS {
+                format!("{}", u.gpu)
+            } else {
+                "[N/A]".into()
+            }
+        }
+        "brand" => {
+            let mut brand = 0u32;
+            if nvmlDeviceGetBrand(h, &mut brand) == NVML_SUCCESS {
+                hermes_nvml_brand_name(brand).to_string()
+            } else {
+                "[N/A]".into()
+            }
+        }
+        "compute_cap" => {
+            let mut maj = 0i32;
+            let mut min = 0i32;
+            if nvmlDeviceGetCudaComputeCapability(h, &mut maj, &mut min) == NVML_SUCCESS {
+                format!("{maj}.{min}")
+            } else {
+                "[N/A]".into()
+            }
+        }
+        other => format!("[unknown:{other}]"),
     }
 }
 
@@ -186,6 +329,7 @@ fn print_summary_table(discovered: usize) {
         let mut temp_s = "N/A".to_string();
         let mut pwr_s = "N/A".to_string();
         let mut util_s = "N/A".to_string();
+        let mut fan_s = "N/A".to_string();
         if online {
             let mut t = 0u32;
             if nvmlDeviceGetTemperature(h, 0, &mut t) == NVML_SUCCESS {
@@ -199,7 +343,22 @@ fn print_summary_table(discovered: usize) {
             if nvmlDeviceGetUtilizationRates(h, &mut u) == NVML_SUCCESS {
                 util_s = format!("{}%", u.gpu);
             }
+            let mut fan = 0u32;
+            if nvmlDeviceGetFanSpeed(h, &mut fan) == NVML_SUCCESS {
+                fan_s = format!("{fan}%");
+            }
         }
+
+        let mut cap_mw = 70_000u32;
+        let _ = nvmlDeviceGetEnforcedPowerLimit(h, &mut cap_mw);
+        let cap_w = cap_mw / 1000;
+
+        let mut brand = 0u32;
+        let brand_s = if nvmlDeviceGetBrand(h, &mut brand) == NVML_SUCCESS {
+            hermes_nvml_brand_name(brand)
+        } else {
+            "?"
+        };
 
         let mut maj = 0i32;
         let mut min = 0i32;
@@ -213,13 +372,17 @@ fn print_summary_table(discovered: usize) {
 
         println!(
             "| {i:>3}  {:18}  {pers_s:>3}  | {bus_s:16}  On |                  N/A |\n\
-             | N/A  {temp_s:>5}  P0   {pwr_s:>6} /  70W |   {used_mib:>5}MiB / {total_mib:>5}MiB |   {util_s:>5}      Default |\n\
+             | {fan_s:>4} {temp_s:>5}  P0   {pwr_s:>6} /{cap_w:>4}W |   {used_mib:>5}MiB / {total_mib:>5}MiB |   {util_s:>5}      Default |\n\
              |                               |                      |                  N/A |",
             truncate(&name_s, 18),
         );
         if let Some(line) = hermes_nvml_format_device_line(i as usize) {
             println!("| Hermes: {:70} |", truncate(&line, 70));
         }
+        println!(
+            "| brand={brand_s} sm{maj}.{min} phase={}                                        |",
+            phase.label()
+        );
     }
     println!("+-------------------------------+----------------------+----------------------+");
     println!();

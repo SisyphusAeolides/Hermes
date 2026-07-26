@@ -23,7 +23,9 @@ pub use connector::{Connector, ConnectorStatus, ConnectorType};
 pub use crtc::Crtc;
 pub use device::{DrmDevice, DrmError};
 pub use framebuffer::{Framebuffer, FramebufferError, PixelFormat};
-pub use gem::{DumbCreateRequest, DumbCreateResult, GemError, GemManager, GemObject};
+pub use gem::{
+    DumbCreateRequest, DumbCreateResult, GemError, GemManager, GemObject, PrimeExport,
+};
 pub use mode::DisplayMode;
 pub use pageflip::{page_flip, FlipError, PageFlipRequest, VblankEvent, VblankState};
 pub use plane::{Plane, PlaneType};

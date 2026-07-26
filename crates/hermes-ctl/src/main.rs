@@ -528,6 +528,25 @@ fn smi_smoke(mode: &str) {
                 eprintln!("error: expected ONLINE phase in device line");
                 std::process::exit(1);
             }
+            use nvidia_ml::{
+                hermes_nvml_brand_name, nvmlDeviceGetBrand, nvmlDeviceGetFanSpeed,
+                nvmlDeviceGetHandleByIndex_v2, nvmlDeviceGetPowerUsage,
+            };
+            let mut h = 0u64;
+            assert_eq!(nvmlDeviceGetHandleByIndex_v2(0, &mut h), NVML_SUCCESS);
+            let mut brand = 0u32;
+            assert_eq!(nvmlDeviceGetBrand(h, &mut brand), NVML_SUCCESS);
+            let mut fan = 0u32;
+            assert_eq!(nvmlDeviceGetFanSpeed(h, &mut fan), NVML_SUCCESS);
+            let mut mw = 0u32;
+            assert_eq!(nvmlDeviceGetPowerUsage(h, &mut mw), NVML_SUCCESS);
+            println!(
+                "  brand={} fan={}% power={}mW",
+                hermes_nvml_brand_name(brand),
+                fan,
+                mw
+            );
+            assert!(fan > 0 && mw > 0);
             println!("PASS");
         }
         other => {
@@ -642,6 +661,9 @@ fn cuda_smoke(mode: &str) {
             println!("PASS");
         }
         "deep" => {
+            let mut ver = 0i32;
+            assert_eq!(hermes_cuda::cuDriverGetVersion(&mut ver), CUDA_SUCCESS);
+            println!("cuDriverGetVersion={ver}");
             hermes_cuda_set_gsp_online(true);
             assert_eq!(cuInit(0), CUDA_SUCCESS);
             // Primary context path (runtime-style).
@@ -840,6 +862,14 @@ fn drm_smoke(mode: &str) {
                 .expect("gem")
                 .fill_solid_xrgb8888(0x00ff_0000)
                 .expect("fill");
+            let name = dev.gem_flink(dumb.handle).expect("flink");
+            let opened = dev.gem_open_name(name).expect("open_name");
+            let prime = dev.gem_prime_export(dumb.handle).expect("prime_export");
+            let imported = dev.gem_prime_import(prime.token).expect("prime_import");
+            println!(
+                "gem flink name={name} open={opened} prime_token={} import={imported}",
+                prime.token
+            );
             let fb_id = dev
                 .add_fb_from_gem(dumb.handle, PixelFormat::Xrgb8888)
                 .expect("fb");

@@ -261,19 +261,47 @@ fn ensure_module(name: &str, verbose: bool) -> Result<bool, String> {
     }
 }
 
+fn kmod_search_dirs() -> Vec<String> {
+    let mut dirs = Vec::new();
+    if let Ok(d) = env::var("HERMES_KMOD_DIR") {
+        dirs.push(d);
+    }
+    // Relative to CWD and common checkout layouts.
+    dirs.push("linux/kmod".into());
+    dirs.push("./linux/kmod".into());
+    // Walk up from this binary's directory when possible.
+    if let Ok(exe) = env::current_exe() {
+        if let Some(bin) = exe.parent() {
+            // target/debug → repo root ≈ ../../..
+            for up in [1, 2, 3, 4] {
+                let mut p = bin.to_path_buf();
+                for _ in 0..up {
+                    if !p.pop() {
+                        break;
+                    }
+                }
+                p.push("linux/kmod");
+                if p.is_dir() {
+                    dirs.push(p.display().to_string());
+                }
+            }
+        }
+    }
+    dirs.sort();
+    dirs.dedup();
+    dirs
+}
+
 fn try_insmod_local(name: &str, verbose: bool) -> Result<(), String> {
-    let candidates = [
-        format!("linux/kmod/{name}.ko"),
-        format!("/home/Sisyphus/Projects/Hermes/linux/kmod/{name}.ko"),
-    ];
-    for p in &candidates {
-        if !Path::new(p).exists() {
+    for dir in kmod_search_dirs() {
+        let p = format!("{dir}/{name}.ko");
+        if !Path::new(&p).exists() {
             continue;
         }
         if verbose {
             println!("  trying insmod {p}");
         }
-        let o = Command::new("insmod").arg(p).output();
+        let o = Command::new("insmod").arg(&p).output();
         match o {
             Ok(r) if r.status.success() => return Ok(()),
             Ok(r) => {

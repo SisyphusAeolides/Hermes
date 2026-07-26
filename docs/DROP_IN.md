@@ -40,13 +40,16 @@ a name does not mark the GPU Online; the manifold gates still apply.
 ```sh
 cargo run -p hermes-ctl --bin nvidia-smi -- -L
 cargo run -p hermes-ctl --bin nvidia-smi -- --hermes-sim-online
+cargo run -p hermes-ctl --bin nvidia-smi -- --hermes-sim-online \
+  --query-gpu=name,brand,fan.speed,temperature.gpu,power.draw,memory.total
 cargo run -p hermes-ctl --bin hermes-ctl -- smi-smoke host
 cargo run -p hermes-ctl --bin hermes-ctl -- smi-smoke online
 ```
 
 Host discover binds Offline NVML slots from PCI. `--hermes-sim-online` promotes
-the first GPU with a complete-evidence Online manifold so power/temp/util query
-paths run through the real NVML ABI.
+the first GPU with a complete-evidence Online manifold so power/temp/fan/util
+query paths run through the real NVML ABI. Summary table shows fan, power cap,
+brand, and SM version when Online.
 
 ### nvidia-settings
 

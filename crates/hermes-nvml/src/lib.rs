@@ -843,6 +843,24 @@ fn brand_for_device(device_id: u16, name: &str) -> u32 {
     }
 }
 
+/// Human label for an `nvmlBrandType_t` value (Hermes subset).
+pub fn hermes_nvml_brand_name(brand: u32) -> &'static str {
+    match brand {
+        NVML_BRAND_QUADRO => "Quadro",
+        NVML_BRAND_TESLA => "Tesla",
+        NVML_BRAND_NVS => "NVS",
+        NVML_BRAND_GRID => "GRID",
+        NVML_BRAND_GEFORCE => "GeForce",
+        NVML_BRAND_TITAN => "TITAN",
+        NVML_BRAND_QUADRO_RTX => "Quadro RTX",
+        NVML_BRAND_NVIDIA_RTX => "NVIDIA RTX",
+        NVML_BRAND_GEFORCE_RTX => "GeForce RTX",
+        NVML_BRAND_TITAN_RTX => "TITAN RTX",
+        NVML_BRAND_NVIDIA => "NVIDIA",
+        _ => "Unknown",
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn nvmlDeviceGetBrand(device: NvmlDevice_t, brand: *mut u32) -> NvmlReturn {
     if brand.is_null() {

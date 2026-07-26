@@ -264,6 +264,109 @@ fn device_mem_used(s: &CudaState, device: u32) -> u64 {
 
 // ─── Driver API ───────────────────────────────────────────────────────────
 
+/// Report driver version even before Online (library identity, not device Online).
+#[no_mangle]
+pub extern "C" fn cuDriverGetVersion(driver_version: *mut i32) -> CudaResult {
+    if driver_version.is_null() {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    // 12.0 encoded as 12000 (matches NVML cuda driver version surface).
+    unsafe {
+        *driver_version = 12_000;
+    }
+    CUDA_SUCCESS
+}
+
+fn error_name(code: CudaResult) -> &'static str {
+    match code {
+        CUDA_SUCCESS => "CUDA_SUCCESS",
+        CUDA_ERROR_INVALID_VALUE => "CUDA_ERROR_INVALID_VALUE",
+        CUDA_ERROR_OUT_OF_MEMORY => "CUDA_ERROR_OUT_OF_MEMORY",
+        CUDA_ERROR_NOT_INITIALIZED => "CUDA_ERROR_NOT_INITIALIZED",
+        CUDA_ERROR_DEINITIALIZED => "CUDA_ERROR_DEINITIALIZED",
+        CUDA_ERROR_NO_DEVICE => "CUDA_ERROR_NO_DEVICE",
+        CUDA_ERROR_INVALID_DEVICE => "CUDA_ERROR_INVALID_DEVICE",
+        CUDA_ERROR_INVALID_CONTEXT => "CUDA_ERROR_INVALID_CONTEXT",
+        CUDA_ERROR_NOT_READY => "CUDA_ERROR_NOT_READY",
+        CUDA_ERROR_NOT_SUPPORTED => "CUDA_ERROR_NOT_SUPPORTED",
+        CUDA_ERROR_UNKNOWN => "CUDA_ERROR_UNKNOWN",
+        CUDA_ERROR_HERMES_GSP_OFFLINE => "CUDA_ERROR_HERMES_GSP_OFFLINE",
+        _ => "CUDA_ERROR_UNKNOWN",
+    }
+}
+
+fn error_string(code: CudaResult) -> &'static str {
+    match code {
+        CUDA_SUCCESS => "no error",
+        CUDA_ERROR_INVALID_VALUE => "invalid argument",
+        CUDA_ERROR_OUT_OF_MEMORY => "out of memory",
+        CUDA_ERROR_NOT_INITIALIZED => "driver not initialized",
+        CUDA_ERROR_DEINITIALIZED => "driver deinitialized",
+        CUDA_ERROR_NO_DEVICE => "no CUDA-capable device",
+        CUDA_ERROR_INVALID_DEVICE => "invalid device ordinal",
+        CUDA_ERROR_INVALID_CONTEXT => "invalid context",
+        CUDA_ERROR_NOT_READY => "device not ready",
+        CUDA_ERROR_NOT_SUPPORTED => "operation not supported",
+        CUDA_ERROR_HERMES_GSP_OFFLINE => "Hermes GSP not Online",
+        _ => "unknown error",
+    }
+}
+
+// Static C strings for cuGetError* (process lifetime).
+macro_rules! cstr_static {
+    ($s:expr) => {{
+        concat!($s, "\0").as_ptr()
+    }};
+}
+
+#[no_mangle]
+pub extern "C" fn cuGetErrorName(error: CudaResult, pstr: *mut *const i8) -> CudaResult {
+    if pstr.is_null() {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    let s = error_name(error);
+    // Leak-free: point into static tables via match arms with statics.
+    let ptr: *const i8 = match error {
+        CUDA_SUCCESS => cstr_static!("CUDA_SUCCESS") as *const i8,
+        CUDA_ERROR_INVALID_VALUE => cstr_static!("CUDA_ERROR_INVALID_VALUE") as *const i8,
+        CUDA_ERROR_OUT_OF_MEMORY => cstr_static!("CUDA_ERROR_OUT_OF_MEMORY") as *const i8,
+        CUDA_ERROR_NOT_INITIALIZED => cstr_static!("CUDA_ERROR_NOT_INITIALIZED") as *const i8,
+        CUDA_ERROR_INVALID_CONTEXT => cstr_static!("CUDA_ERROR_INVALID_CONTEXT") as *const i8,
+        CUDA_ERROR_NOT_SUPPORTED => cstr_static!("CUDA_ERROR_NOT_SUPPORTED") as *const i8,
+        CUDA_ERROR_HERMES_GSP_OFFLINE => cstr_static!("CUDA_ERROR_HERMES_GSP_OFFLINE") as *const i8,
+        _ => {
+            let _ = s;
+            cstr_static!("CUDA_ERROR_UNKNOWN") as *const i8
+        }
+    };
+    unsafe {
+        *pstr = ptr;
+    }
+    CUDA_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn cuGetErrorString(error: CudaResult, pstr: *mut *const i8) -> CudaResult {
+    if pstr.is_null() {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    let _ = error_string(error);
+    let ptr: *const i8 = match error {
+        CUDA_SUCCESS => cstr_static!("no error") as *const i8,
+        CUDA_ERROR_INVALID_VALUE => cstr_static!("invalid argument") as *const i8,
+        CUDA_ERROR_OUT_OF_MEMORY => cstr_static!("out of memory") as *const i8,
+        CUDA_ERROR_NOT_INITIALIZED => cstr_static!("driver not initialized") as *const i8,
+        CUDA_ERROR_INVALID_CONTEXT => cstr_static!("invalid context") as *const i8,
+        CUDA_ERROR_NOT_SUPPORTED => cstr_static!("operation not supported") as *const i8,
+        CUDA_ERROR_HERMES_GSP_OFFLINE => cstr_static!("Hermes GSP not Online") as *const i8,
+        _ => cstr_static!("unknown error") as *const i8,
+    };
+    unsafe {
+        *pstr = ptr;
+    }
+    CUDA_SUCCESS
+}
+
 #[no_mangle]
 pub extern "C" fn cuInit(_flags: u32) -> CudaResult {
     with_state(|s| {
@@ -870,6 +973,108 @@ pub extern "C" fn cuMemsetD8_v2(dst: u64, value: u8, n: usize) -> CudaResult {
     })
 }
 
+fn validate_async_stream(hstream: u64) -> CudaResult {
+    with_state(|s| {
+        let g = require_gsp(s);
+        if g != CUDA_SUCCESS {
+            return g;
+        }
+        if hstream != 0 && !s.streams.iter().any(|st| st.id == hstream && st.live) {
+            return CUDA_ERROR_INVALID_VALUE;
+        }
+        CUDA_SUCCESS
+    })
+}
+
+/// Async HtoD — host sim completes immediately (stream validated).
+#[no_mangle]
+pub extern "C" fn cuMemcpyHtoDAsync_v2(
+    dst: u64,
+    src: *const u8,
+    bytes: usize,
+    hstream: u64,
+) -> CudaResult {
+    let r = validate_async_stream(hstream);
+    if r != CUDA_SUCCESS {
+        return r;
+    }
+    cuMemcpyHtoD_v2(dst, src, bytes)
+}
+
+#[no_mangle]
+pub extern "C" fn cuMemcpyDtoHAsync_v2(
+    dst: *mut u8,
+    src: u64,
+    bytes: usize,
+    hstream: u64,
+) -> CudaResult {
+    let r = validate_async_stream(hstream);
+    if r != CUDA_SUCCESS {
+        return r;
+    }
+    cuMemcpyDtoH_v2(dst, src, bytes)
+}
+
+#[no_mangle]
+pub extern "C" fn cuMemcpyDtoDAsync_v2(
+    dst: u64,
+    src: u64,
+    bytes: usize,
+    hstream: u64,
+) -> CudaResult {
+    let r = validate_async_stream(hstream);
+    if r != CUDA_SUCCESS {
+        return r;
+    }
+    cuMemcpyDtoD_v2(dst, src, bytes)
+}
+
+/// Load module with explicit image size (fatbin / cubin / PTX / stub).
+#[no_mangle]
+pub extern "C" fn cuModuleLoadDataEx(
+    module: *mut u64,
+    image: *const u8,
+    _num_options: u32,
+    _options: *mut u32,
+    _option_values: *mut *mut u8,
+) -> CudaResult {
+    // Size-unknown classic API; use 256-byte peek like LoadData.
+    cuModuleLoadData(module, image)
+}
+
+/// Load module image with known length (Hermes extension path for real fatbins).
+pub fn hermes_cuda_module_load_sized(image: &[u8]) -> Result<u64, CudaResult> {
+    if image.is_empty() {
+        return Err(CUDA_ERROR_INVALID_VALUE);
+    }
+    let kind = classify_module_image(image);
+    if matches!(kind, ModuleImageKind::Unknown) {
+        return Err(CUDA_ERROR_NOT_SUPPORTED);
+    }
+    with_state(|s| {
+        let g = require_gsp(s);
+        if g != CUDA_SUCCESS {
+            return Err(g);
+        }
+        let ctx = live_ctx(s)?;
+        let id = next_id(s);
+        let name = match kind {
+            ModuleImageKind::Fatbin => "fatbin",
+            ModuleImageKind::CubinElf => "cubin",
+            ModuleImageKind::PtxText => "ptx",
+            ModuleImageKind::HermesStub => "stub",
+            ModuleImageKind::Unknown => "unknown",
+        };
+        s.modules.push(Module {
+            id,
+            ctx,
+            name: name.into(),
+            functions: vec!["hermes_kernel".into(), "main".into()],
+        });
+        Ok(id)
+    })
+}
+
 /// Classify a module image without executing it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ModuleImageKind {
@@ -1288,11 +1493,67 @@ pub extern "C" fn cudaDeviceSynchronize() -> CudaResult {
     })
 }
 
+/// Runtime memcpy kinds (cudaMemcpyKind subset).
+pub const CUDA_MEMCPY_HOST_TO_HOST: i32 = 0;
+pub const CUDA_MEMCPY_HOST_TO_DEVICE: i32 = 1;
+pub const CUDA_MEMCPY_DEVICE_TO_HOST: i32 = 2;
+pub const CUDA_MEMCPY_DEVICE_TO_DEVICE: i32 = 3;
+
+#[no_mangle]
+pub extern "C" fn cudaMemcpy(
+    dst: u64,
+    src: u64,
+    count: usize,
+    kind: i32,
+) -> CudaResult {
+    match kind {
+        CUDA_MEMCPY_HOST_TO_DEVICE => cuMemcpyHtoD_v2(dst, src as *const u8, count),
+        CUDA_MEMCPY_DEVICE_TO_HOST => cuMemcpyDtoH_v2(dst as *mut u8, src, count),
+        CUDA_MEMCPY_DEVICE_TO_DEVICE => cuMemcpyDtoD_v2(dst, src, count),
+        CUDA_MEMCPY_HOST_TO_HOST => {
+            if count == 0 || src == 0 || dst == 0 {
+                return CUDA_ERROR_INVALID_VALUE;
+            }
+            unsafe {
+                core::ptr::copy_nonoverlapping(src as *const u8, dst as *mut u8, count);
+            }
+            CUDA_SUCCESS
+        }
+        _ => CUDA_ERROR_INVALID_VALUE,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn cudaGetLastError() -> CudaResult {
+    CUDA_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn cudaPeekAtLastError() -> CudaResult {
+    CUDA_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn cudaDriverGetVersion(driver_version: *mut i32) -> CudaResult {
+    cuDriverGetVersion(driver_version)
+}
+
+#[no_mangle]
+pub extern "C" fn cudaRuntimeGetVersion(runtime_version: *mut i32) -> CudaResult {
+    if runtime_version.is_null() {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    unsafe {
+        *runtime_version = 12_000;
+    }
+    CUDA_SUCCESS
+}
+
 /// Count of driver entry points Hermes currently exports (for drop-in dashboards).
 pub fn hermes_cuda_driver_entry_count() -> usize {
-    // cuInit, device*, ctx*, primary*, mem*, memcpy*, memset, module*, launch,
-    // stream*, event*, runtime aliases
-    42
+    // cuInit, device*, ctx*, primary*, mem*, memcpy*+async, memset, module*, launch,
+    // stream*, event*, error*, version*, runtime aliases
+    52
 }
 
 pub fn hermes_cuda_host_sort_i32(data: &mut [i32]) {
@@ -1565,5 +1826,51 @@ mod tests {
             cuDevicePrimaryCtxRetain(&mut ctx, 0),
             CUDA_ERROR_HERMES_GSP_OFFLINE
         );
+    }
+
+    #[test]
+    fn driver_version_and_error_strings() {
+        let mut ver = 0i32;
+        assert_eq!(cuDriverGetVersion(&mut ver), CUDA_SUCCESS);
+        assert_eq!(ver, 12_000);
+        let mut p: *const i8 = core::ptr::null();
+        assert_eq!(
+            cuGetErrorName(CUDA_ERROR_HERMES_GSP_OFFLINE, &mut p),
+            CUDA_SUCCESS
+        );
+        assert!(!p.is_null());
+        let s = unsafe { std::ffi::CStr::from_ptr(p) };
+        assert!(s.to_bytes().starts_with(b"CUDA_ERROR_HERMES"));
+        assert_eq!(cuGetErrorString(CUDA_SUCCESS, &mut p), CUDA_SUCCESS);
+    }
+
+    #[test]
+    fn async_memcpy_and_sized_module() {
+        let _g = TEST_LOCK.lock().unwrap();
+        hermes_cuda_reset();
+        hermes_cuda_set_gsp_online(true);
+        assert_eq!(cuInit(0), CUDA_SUCCESS);
+        let mut ctx = 0u64;
+        assert_eq!(cuCtxCreate_v2(&mut ctx, 0, 0), CUDA_SUCCESS);
+        let mut stream = 0u64;
+        assert_eq!(cuStreamCreate(&mut stream, 0), CUDA_SUCCESS);
+        let mut d = 0u64;
+        assert_eq!(cuMemAlloc_v2(&mut d, 8), CUDA_SUCCESS);
+        let src = [9u8; 8];
+        assert_eq!(
+            cuMemcpyHtoDAsync_v2(d, src.as_ptr(), 8, stream),
+            CUDA_SUCCESS
+        );
+        let mut dst = [0u8; 8];
+        assert_eq!(
+            cuMemcpyDtoHAsync_v2(dst.as_mut_ptr(), d, 8, stream),
+            CUDA_SUCCESS
+        );
+        assert_eq!(src, dst);
+        let ptx = b".version 7.0\n.target sm_75\n";
+        let mid = hermes_cuda_module_load_sized(ptx).unwrap();
+        assert_ne!(mid, 0);
+        assert_eq!(cuModuleUnload(mid), CUDA_SUCCESS);
+        hermes_cuda_reset();
     }
 }
