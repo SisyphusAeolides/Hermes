@@ -124,9 +124,14 @@ pub fn hermes_nvml_reset() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    // Global NVML state is process-wide; serialize tests that touch it.
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn init_count_shutdown_without_inventing_online() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         hermes_nvml_reset();
         assert_eq!(nvmlInit_v2(), NVML_SUCCESS);
         let mut count = 99u32;
@@ -145,6 +150,7 @@ mod tests {
 
     #[test]
     fn uninitialized_count_errors() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         hermes_nvml_reset();
         let mut count = 0u32;
         assert_eq!(
