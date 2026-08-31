@@ -129,7 +129,11 @@ mod tests {
         );
         let auth = NvidiaGspFirmwareAuthority::new(core::slice::from_ref(&manifest));
         let fw = auth.admit(admitted.identity.device_id, payload).unwrap();
-        let _plan = plan_activation(admitted.architecture, &fw);
+        let architecture = match admitted.architecture {
+            hermes_core::vendor::VendorArchitecture::Nvidia(architecture) => architecture,
+            _ => panic!("NVIDIA identity admitted a non-NVIDIA architecture"),
+        };
+        let _plan = plan_activation(architecture, &fw);
         let online = drive_full_success(1, 42, default_negotiated_features()).unwrap();
         assert!(online.is_online());
         assert_eq!(online.evidence.dma_domain, 42);

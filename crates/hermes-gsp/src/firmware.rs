@@ -1,7 +1,7 @@
 //! Source-pinned GSP-RM firmware manifests and admission.
 
 use hermes_core::vendor::{
-    is_nvidia_turing_or_newer, nvidia_architecture_hint, NvidiaArchitecture,
+    nvidia_architecture_hint,
     NVIDIA_ARCHITECTURE_ADA, NVIDIA_ARCHITECTURE_AMPERE, NVIDIA_ARCHITECTURE_BLACKWELL,
     NVIDIA_ARCHITECTURE_HOPPER, NVIDIA_ARCHITECTURE_TURING,
 };
