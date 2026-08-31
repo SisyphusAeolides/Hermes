@@ -6,19 +6,16 @@
 #![no_std]
 
 pub mod admission;
-pub mod family;
+pub mod vendor;
+pub mod chaos;
 pub mod manifold;
 pub mod platform;
+pub mod ring;
 
 pub use admission::{
-    AdmissionError, AdmittedDevice, admit_display_device, admit_nvidia_device, pci_identity,
+    AdmissionError, AdmittedDevice, admit_display_device, admit_gpu_device, pci_identity,
 };
-pub use family::{
-    NVIDIA_ARCHITECTURE_ADA, NVIDIA_ARCHITECTURE_AMPERE, NVIDIA_ARCHITECTURE_BLACKWELL,
-    NVIDIA_ARCHITECTURE_HOPPER, NVIDIA_ARCHITECTURE_TURING, NVIDIA_ARCHITECTURE_TURING_OR_NEWER,
-    NVIDIA_VENDOR_ID, NvidiaArchitecture, is_nvidia_turing_or_newer, nvidia_architecture,
-    nvidia_architecture_hint,
-};
+pub use vendor::*;
 pub use manifold::{
     HermesEvidence, HermesManifold, HermesPhase, ManifoldFault, OnlineCertificate, feature,
 };

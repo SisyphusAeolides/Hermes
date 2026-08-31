@@ -81,15 +81,15 @@ struct hermes_bringup_result hermes_run_bringup(const struct hermes_pci_id *id,
 		return r;
 	}
 
-	if (id->vendor != HERMES_VENDOR_NVIDIA) {
-		r.status = HERMES_BRINGUP_NOT_NVIDIA;
+	if (id->vendor != HERMES_VENDOR_NVIDIA && id->vendor != HERMES_VENDOR_AMD && id->vendor != HERMES_VENDOR_INTEL) {
+		r.status = HERMES_BRINGUP_UNSUPPORTED_VENDOR;
 		return r;
 	}
 	if (id->class_code != 0x03) {
 		r.status = HERMES_BRINGUP_NOT_DISPLAY;
 		return r;
 	}
-	if (!hermes_is_turing_or_newer(id->device)) {
+	if (id->vendor == HERMES_VENDOR_NVIDIA && !hermes_is_turing_or_newer(id->device)) {
 		r.status = HERMES_BRINGUP_PRE_TURING;
 		return r;
 	}

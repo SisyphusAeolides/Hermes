@@ -1,9 +1,10 @@
-//! Device admission for NVIDIA Turing+ display controllers.
+//! Device admission for GPUs (NVIDIA Turing+, AMD, Intel).
 
 use hermes_abi::hermes::HermesPciIdentity;
 
-use crate::family::{
-    NVIDIA_VENDOR_ID, NvidiaArchitecture, is_nvidia_turing_or_newer, nvidia_architecture,
+use crate::vendor::{
+    amd_architecture, intel_architecture, is_nvidia_turing_or_newer, nvidia_architecture,
+    VendorArchitecture, AMD_VENDOR_ID, INTEL_VENDOR_ID, NVIDIA_VENDOR_ID,
 };
 use crate::platform::HermesFault;
 
@@ -11,7 +12,7 @@ pub const PCI_CLASS_DISPLAY: u8 = 0x03;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AdmissionError {
-    NotNvidia,
+    UnsupportedVendor,
     NotDisplayController,
     UnsupportedArchitecture,
     InvalidIdentity,
@@ -20,7 +21,7 @@ pub enum AdmissionError {
 impl From<AdmissionError> for HermesFault {
     fn from(value: AdmissionError) -> Self {
         match value {
-            AdmissionError::NotNvidia => HermesFault::NotNvidia,
+            AdmissionError::UnsupportedVendor => HermesFault::NotNvidia, // TODO: Add UnsupportedVendor to HermesFault
             AdmissionError::NotDisplayController => HermesFault::NotDisplayController,
             AdmissionError::UnsupportedArchitecture => HermesFault::UnsupportedArchitecture,
             AdmissionError::InvalidIdentity => HermesFault::CompatibilityRejected,
@@ -28,33 +29,51 @@ impl From<AdmissionError> for HermesFault {
     }
 }
 
-/// A device that has passed structural PCI + Turing+ gates (not yet online).
+/// A device that has passed structural PCI + architecture gates (not yet online).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AdmittedDevice {
     pub identity: HermesPciIdentity,
-    pub architecture: NvidiaArchitecture,
+    pub architecture: VendorArchitecture,
 }
 
-/// Admit any NVIDIA Turing+ device (display class preferred for graphics path).
-pub fn admit_nvidia_device(identity: &HermesPciIdentity) -> Result<AdmittedDevice, AdmissionError> {
+/// Admit any supported GPU device (display class preferred for graphics path).
+pub fn admit_gpu_device(identity: &HermesPciIdentity) -> Result<AdmittedDevice, AdmissionError> {
     validate_identity(identity)?;
-    if identity.vendor_id != NVIDIA_VENDOR_ID {
-        return Err(AdmissionError::NotNvidia);
-    }
-    let architecture =
-        nvidia_architecture(identity.device_id).ok_or(AdmissionError::UnsupportedArchitecture)?;
-    if !is_nvidia_turing_or_newer(identity.device_id) {
-        return Err(AdmissionError::UnsupportedArchitecture);
-    }
+    
+    let architecture = match identity.vendor_id {
+        NVIDIA_VENDOR_ID => {
+            if !is_nvidia_turing_or_newer(identity.device_id) {
+                return Err(AdmissionError::UnsupportedArchitecture);
+            }
+            VendorArchitecture::Nvidia(
+                nvidia_architecture(identity.device_id)
+                    .ok_or(AdmissionError::UnsupportedArchitecture)?
+            )
+        },
+        AMD_VENDOR_ID => {
+            VendorArchitecture::Amd(
+                amd_architecture(identity.device_id)
+                    .ok_or(AdmissionError::UnsupportedArchitecture)?
+            )
+        },
+        INTEL_VENDOR_ID => {
+            VendorArchitecture::Intel(
+                intel_architecture(identity.device_id)
+                    .ok_or(AdmissionError::UnsupportedArchitecture)?
+            )
+        },
+        _ => return Err(AdmissionError::UnsupportedVendor),
+    };
+
     Ok(AdmittedDevice {
         identity: *identity,
         architecture,
     })
 }
 
-/// Admit an NVIDIA Turing+ display controller (class 0x03).
+/// Admit a supported GPU display controller (class 0x03).
 pub fn admit_display_device(identity: &HermesPciIdentity) -> Result<AdmittedDevice, AdmissionError> {
-    let admitted = admit_nvidia_device(identity)?;
+    let admitted = admit_gpu_device(identity)?;
     if identity.class_code != PCI_CLASS_DISPLAY {
         return Err(AdmissionError::NotDisplayController);
     }
@@ -98,13 +117,13 @@ pub const fn pci_identity(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::family::NVIDIA_VENDOR_ID;
+    use crate::vendor::{NvidiaArchitecture, NVIDIA_VENDOR_ID, AMD_VENDOR_ID, INTEL_VENDOR_ID, AmdArchitecture, IntelArchitecture};
 
     #[test]
     fn admits_t1000_display_rejects_volta() {
         let t1000 = pci_identity(NVIDIA_VENDOR_ID, 0x1fb9, PCI_CLASS_DISPLAY, 0x00);
         let admitted = admit_display_device(&t1000).expect("T1000 must admit");
-        assert_eq!(admitted.architecture, NvidiaArchitecture::Turing);
+        assert_eq!(admitted.architecture, VendorArchitecture::Nvidia(NvidiaArchitecture::Turing));
 
         let volta = pci_identity(NVIDIA_VENDOR_ID, 0x1db6, PCI_CLASS_DISPLAY, 0x00);
         assert_eq!(
@@ -114,11 +133,11 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_nvidia_and_non_display() {
-        let intel = pci_identity(0x8086, 0x3e9b, PCI_CLASS_DISPLAY, 0x00);
+    fn rejects_unsupported_vendor_and_non_display() {
+        let unsupported = pci_identity(0x1234, 0x5678, PCI_CLASS_DISPLAY, 0x00);
         assert_eq!(
-            admit_display_device(&intel),
-            Err(AdmissionError::NotNvidia)
+            admit_display_device(&unsupported),
+            Err(AdmissionError::UnsupportedVendor)
         );
 
         let audio = pci_identity(NVIDIA_VENDOR_ID, 0x1fb9, 0x04, 0x03);
@@ -127,7 +146,7 @@ mod tests {
             Err(AdmissionError::NotDisplayController)
         );
         // Non-display NVIDIA Turing device can still admit via generic path.
-        assert!(admit_nvidia_device(&audio).is_ok());
+        assert!(admit_gpu_device(&audio).is_ok());
     }
 
     #[test]
@@ -136,5 +155,19 @@ mod tests {
             let dev = pci_identity(NVIDIA_VENDOR_ID, id, PCI_CLASS_DISPLAY, 0x00);
             assert!(admit_display_device(&dev).is_ok(), "device {id:#x}");
         }
+    }
+    
+    #[test]
+    fn admits_amd_rdna2() {
+        let rx6800 = pci_identity(AMD_VENDOR_ID, 0x73bf, PCI_CLASS_DISPLAY, 0x00);
+        let admitted = admit_display_device(&rx6800).expect("RX6800 must admit");
+        assert_eq!(admitted.architecture, VendorArchitecture::Amd(AmdArchitecture::RDNA2));
+    }
+    
+    #[test]
+    fn admits_intel_arc() {
+        let arc770 = pci_identity(INTEL_VENDOR_ID, 0x5690, PCI_CLASS_DISPLAY, 0x00);
+        let admitted = admit_display_device(&arc770).expect("Arc must admit");
+        assert_eq!(admitted.architecture, VendorArchitecture::Intel(IntelArchitecture::Arc));
     }
 }

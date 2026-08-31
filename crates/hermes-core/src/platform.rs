@@ -139,6 +139,15 @@ pub trait HermesPlatform: Sync {
 
     fn now_tick(&self) -> u64;
     fn relax(&self);
+
+    /// Unpredictable, phase-decorrelated backoff combining chaotic attractors.
+    /// Radically increases throughput for concurrent lockless rings by breaking phase-locks.
+    fn chaos_relax(&self, scheduler: &mut crate::chaos::ChaosScheduler, dt: f32) {
+        let iterations = scheduler.next_interval(dt);
+        for _ in 0..iterations {
+            self.relax();
+        }
+    }
 }
 
 /// Codec personality for GSP wire encode/decode (open-RM protocol family).

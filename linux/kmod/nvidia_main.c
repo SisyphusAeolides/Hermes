@@ -112,6 +112,22 @@ static const struct pci_device_id hermes_pci_table[] = {
 		.class = PCI_CLASS_DISPLAY_3D << 8,
 		.class_mask = 0xffff00,
 	},
+	{
+		.vendor = PCI_VENDOR_ID_ATI,
+		.device = PCI_ANY_ID,
+		.subvendor = PCI_ANY_ID,
+		.subdevice = PCI_ANY_ID,
+		.class = PCI_CLASS_DISPLAY_VGA << 8,
+		.class_mask = 0xffff00,
+	},
+	{
+		.vendor = PCI_VENDOR_ID_INTEL,
+		.device = PCI_ANY_ID,
+		.subvendor = PCI_ANY_ID,
+		.subdevice = PCI_ANY_ID,
+		.class = PCI_CLASS_DISPLAY_VGA << 8,
+		.class_mask = 0xffff00,
+	},
 	{ 0 }
 };
 MODULE_DEVICE_TABLE(pci, hermes_pci_table);

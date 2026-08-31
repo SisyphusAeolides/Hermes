@@ -13,6 +13,8 @@ typedef uint32_t u32;
 #endif
 
 #define HERMES_VENDOR_NVIDIA 0x10deU
+#define HERMES_VENDOR_AMD 0x1002U
+#define HERMES_VENDOR_INTEL 0x8086U
 
 enum hermes_phase {
 	HERMES_PHASE_OFFLINE = 0,
@@ -34,6 +36,7 @@ enum hermes_bringup_status {
 	HERMES_BRINGUP_ISOLATION = 5,
 	HERMES_BRINGUP_INCOMPLETE_EVIDENCE = 6,
 	HERMES_BRINGUP_INTERNAL = 7,
+	HERMES_BRINGUP_UNSUPPORTED_VENDOR = 8,
 };
 
 struct hermes_pci_id {
