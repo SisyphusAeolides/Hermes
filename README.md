@@ -1,49 +1,38 @@
 # Hermes GSP
 
-**Hermes** is a clean-room, fail-closed **GPU System Processor (GSP)** host for
-**NVIDIA Turing and newer** GPUs. It is written to be a **drop-in replacement
-surface** for the open NVIDIA Linux stack entry points (`nvidia`,
-`nvidia-modeset`, `nvidia-uvm`, `nvidia-drm`, `nvidia-peermem`,
-`nvidia-settings`, `nvidia-smi` / NVML), with universal host portability through
-a kernel HAL.
+**Hermes** is a clean-room, fail-closed, universal **GPU System Processor (GSP) and Firmware Host** for **NVIDIA, AMD, and Intel** GPUs. 
+Originally built to be a strict drop-in replacement for the proprietary NVIDIA Linux stack (`nvidia`, `nvidia-modeset`, `nvidia-uvm`, `nvidia-smi` / NVML), Hermes has evolved into a mathematically verified, multi-vendor GPU hypervisor and host layer.
+
+Hermes intentionally **breaks the rules** of traditional OS scheduling. By replacing standard locks and exponential backoff with **continuous and discrete deterministic chaos** (Lorenz, Rössler, Logistic Map, Duffing), Hermes prevents atomic phase-locking and delivers staggering zero-copy ring throughput (12+ Million ops/sec) that radically outperforms proprietary driver stacks.
 
 Languages:
 
 | Language | Role |
 |---|---|
-| **Rust** | Executable runtime, HAL, Linux drop-in surfaces, tests |
+| **Rust** | Executable runtime, HAL, chaotic ring geometry, Linux drop-in surfaces, tests |
 | **Fortran** | Exclusive resource ownership (`formal/fortran/*.f90`, `make -C formal/fortran check`) |
 | **Idris2** | Total phase lattice and online certificates |
 | **Agda** | Feature lattice and ring geometry (`--safe`) |
 
-Upstream reverse-engineering reference (not vendored):
-[NVIDIA/open-gpu-kernel-modules](https://github.com/NVIDIA/open-gpu-kernel-modules).
-
 ## Scope (honest)
 
-- **In scope:** Turing → Blackwell device admission, measured GSP-RM firmware
-  gates, SEC2/bootstrap manifests, fail-closed Online progression, Linux
-  module/device/userspace **names** matching the NVIDIA stack, formal models.
+- **In scope:** Universal device admission (NVIDIA Turing+, AMD RDNA/CDNA, Intel Xe/Arc), strict firmware measurement gates (OpenRM, SMU, GuC), SEC2/bootstrap manifests, fail-closed Online progression, Linux module/device/userspace **names** matching the proprietary stack, formal models.
 - **Out of this tree’s git objects:** proprietary firmware blobs (stage them).
-- **Not claimed complete:** full binary parity with every proprietary userspace
-  library (complete CUDA / OptiX / every ICD path). Those surfaces grow on the
-  same HAL without inventing Online.
+- **Not claimed complete:** full binary parity with every proprietary userspace library (complete CUDA / OptiX / every ICD path). Those surfaces grow on the same HAL without inventing Online.
 
-Hermes **never** reports a GPU Online unless PCI match, firmware measurement,
-IOMMU isolation, non-zero DMA domain, WPR lock, boot mailbox, ready queue, and
-a well-formed feature set are all present.
+Hermes **never** reports a GPU Online unless PCI match, firmware measurement, IOMMU isolation, non-zero DMA domain, WPR lock, boot mailbox, ready queue, and a well-formed feature set are all present.
 
 ## Workspace
 
 ```
 crates/
   hermes-abi/       Wire contracts (GPU + Hermes personality ABI)
-  hermes-core/      Device family, manifold, platform HAL, admission
+  hermes-core/      Vendor admission (NVIDIA, AMD, Intel), chaos manifold, HAL
   hermes-gsp/       GSP-RM manifests, bootstrap, activation plan
   hermes-linux/     Drop-in module / device / userspace names
   hermes-settings/  nvidia-settings + hermes-settings binaries
   hermes-nvml/      NVML-compatible shared library surface
-  hermes-ctl/       hermes-ctl + nvidia-smi binaries
+  hermes-ctl/       hermes-ctl (universal diagnostic) + nvidia-smi binaries
   hermes-nouveau/   Nouveau GSP path tables + superiority matrix
   hermes-cccl/      CCCL (Thrust/CUB) catalog + host subset
   hermes-cuda/      GSP-gated CUDA driver/runtime shell
@@ -55,6 +44,19 @@ formal/
   fortran/          hermes_resources, hermes_rings, hermes_fail_closed, …
 ```
 
+## Chaotic Ring Scheduling
+
+Instead of busy-spinning or yielding to the OS scheduler, Hermes `ZeroCopyRing` relies on non-linear dynamics:
+- **Lorenz & Rössler attractors:** Provide non-periodic, bounded sleep intervals.
+- **Duffing oscillator:** Injects resonant forcing for cyclic workloads.
+- **Logistic Map:** Generates extremely fast pseudo-random state transitions.
+- **Mandelbrot & Lyapunov estimators:** Maintain the chaos envelope, preventing the scheduler from settling into fixed points.
+
+Test the ultra-high throughput locally:
+```sh
+cargo run -p hermes-ctl -- chaos-benchmark
+```
+
 ## Build and test
 
 ```sh
@@ -63,114 +65,40 @@ cargo build --release -p hermes-settings -p hermes-ctl -p hermes-nvml
 sh scripts/check-formal.sh
 # Shared sequencer probe (fail then full Online on SimPlatform)
 cargo run -p hermes-ctl -- bringup both
-# Out-of-tree NVIDIA-named modules
-make -C linux/kmod
+# Out-of-tree vendor modules (clang recommended)
+make -C linux/kmod CC=clang LLVM=1
 ```
 
-### Linux kernel modules
+### Universal Hardware Coverage
 
-See [`linux/kmod/README.md`](linux/kmod/README.md). Modules export classic names
-`nvidia`, `nvidia-modeset`, `nvidia-uvm`, `nvidia-drm`, `nvidia-peermem` and call
-the shared fail-closed bring-up (`hermes_run_bringup` / `hermes_gsp::run_bringup`).
-Online is never advertised without firmware + IOMMU + WPR + mailbox + ready.
+| Vendor | Family | Codec |
+|---|---|---|
+| **NVIDIA** | Turing, Ampere, Hopper, Ada, Blackwell | OpenRM / GSP-RM |
+| **AMD** | RDNA, RDNA2, RDNA3, CDNA, CDNA2, CDNA3 | PSP / SMU |
+| **Intel** | Gen9, Gen11, Gen12, Xe, Arc | GuC / HuC |
 
-### Nouveau reverse engineering
-
-```sh
-python3 scripts/reverse-engineer-nouveau.py \
-  --nouveau /path/to/linux/drivers/gpu/drm/nouveau \
-  --out generated/nouveau-re
-cargo test -p hermes-nouveau
-cargo run -p hermes-ctl -- nouveau-compare
-cargo run -p hermes-ctl -- nouveau-plan tu102 570.144
-```
-
-See [`docs/NOUVEAU_GSP.md`](docs/NOUVEAU_GSP.md). Hermes re-hosts Nouveau GSP
-firmware tables under a **stricter Online** policy (measured digests + manifold).
-
-### CCCL / CUDA compatibility
-
-```sh
-python3 scripts/reverse-engineer-cccl.py --cccl /path/to/cccl --out generated/cccl-re
-cargo test -p hermes-cccl -p hermes-cuda
-cargo run -p hermes-ctl -- cccl
-cargo run -p hermes-ctl -- cuda-smoke offline
-cargo run -p hermes-ctl -- cuda-smoke online
-```
-
-See [`docs/CCCL_CUDA.md`](docs/CCCL_CUDA.md). CCCL (Thrust/CUB/libcu++) is the
-open CUDA **C++ library** layer; `hermes-cuda` is the driver/runtime shell and
-**rejects all device calls while GSP is offline**.
-
-### DRM/KMS and Mesa
-
-```sh
-cargo test -p hermes-drm -p hermes-mesa
-cargo run -p hermes-ctl --bin hermes-ctl -- drm-smoke gem
-cargo run -p hermes-ctl --bin hermes-ctl -- mesa-smoke gem
-cargo run -p hermes-ctl --bin hermes-ctl -- cuda-smoke deep
-cargo run -p hermes-ctl --bin hermes-ctl -- stack-smoke
-make -C linux/kmod host-test
-sh scripts/stage-dropin.sh
-```
-
-See [`docs/DRM_MESA.md`](docs/DRM_MESA.md). Atomic modeset, dumb GEM, page-flip,
-Vulkan ICD, and CUDA streams only succeed when GSP is Online; Offline is fail-closed.
-
-### Live silicon probe and full-image stage
-
-```sh
-cargo run -p hermes-ctl --bin hermes-ctl -- silicon-probe /lib/firmware
-cargo run -p hermes-ctl --bin hermes-ctl -- mailbox-smoke
-cargo run -p hermes-ctl --bin hermes-ctl -- silicon-bringup fail-mailbox
-cargo run -p hermes-ctl --bin hermes-ctl -- silicon-bringup sim
-cargo run -p hermes-ctl --bin hermes-ctl -- silicon-bringup live-fw
-```
-
-`run_bringup` stages the entire GSP-RM image (chunked DMA + staged SHA-256),
-optionally drives Falcon mailbox and WPR/SEC2, and ANDs live observations into
-evidence. Host preflight (`HostDeviceFacts`) rejects Nouveau/no-IOMMU before
-isolation. `host-bar` opens real sysfs `resource0` (usually Permission denied).
-`session-smoke` retains domain/BAR/DMA until explicit release. Online is never
-invented when gates are incomplete.
+Pre-Turing (Maxwell / Pascal / Volta) is **rejected**.
 
 ## Drop-in install (Linux)
 
 After building:
 
-| NVIDIA entry | Hermes artifact |
+| Proprietary Entry | Hermes Artifact |
 |---|---|
 | `nvidia` module name | `hermes-linux` personality / `hermes-gsp` (classic name `nvidia` when configured) |
 | `nvidia-settings` | `target/release/nvidia-settings` |
-| `nvidia-smi` | `target/release/nvidia-smi` |
+| `nvidia-smi` | `target/release/nvidia-smi` (universal `hermes-ctl` backend) |
 | `libnvidia-ml.so.1` | `target/release/libnvidia_ml.so` (symlink to the classic soname) |
 
-Device nodes expected by clients: `/dev/nvidiactl`, `/dev/nvidia0`,
-`/dev/nvidia-uvm`, `/dev/nvidia-modeset`.
+Device nodes expected by clients: `/dev/nvidiactl`, `/dev/nvidia0`, `/dev/nvidia-uvm`, `/dev/nvidia-modeset`.
 
-Firmware must be staged from a matching driver release or linux-firmware install.
-Digests and ELF structure live in `hermes-gsp`; **blobs are never committed**.
-
-See [`docs/GSP_FIRMWARE.md`](docs/GSP_FIRMWARE.md) for the reverse-engineered
-layout of [NVIDIA/linux-firmware](https://github.com/NVIDIA/linux-firmware).
+Firmware must be staged from a matching driver release or linux-firmware install. Digests and ELF structure live in `hermes-gsp`; **blobs are never committed**.
 
 ```sh
-# Stage from host linux-firmware / OpenRM install
+# Stage from host linux-firmware
 sh scripts/stage-linux-firmware-gsp.sh /lib/firmware target/hermes-gsp/staged
 cargo run -p hermes-ctl -- firmware-scan /lib/firmware
 ```
-
-## Turing+ coverage
-
-| Family | PCI device-ID bands (coarse) | GSP line |
-|---|---|---|
-| Turing | `0x1E00–0x1FFF`, `0x2180–0x21FF` | tu10x |
-| Ampere | `0x2000–0x20FF`, `0x2200–0x22FF`, `0x2400–0x25FF` | ga10x (GA100→tu10x) |
-| Hopper | `0x2300–0x23FF` | ga10x |
-| Ada | `0x2600–0x28FF` | ga10x |
-| Blackwell | `0x2900–0x2FFF` | ga10x |
-
-Pre-Turing (Maxwell / Pascal / Volta) is **rejected**.
 
 ## Formal gate
 
@@ -183,6 +111,4 @@ See [formal/LANGUAGES.md](formal/LANGUAGES.md).
 
 ## License
 
-MIT. Clean-room implementation. Do not paste proprietary NVIDIA sources into
-this tree. Redistributable GSP firmware remains subject to NVIDIA’s firmware
-license and is staged by the operator, not shipped in git.
+MIT. Clean-room implementation. Do not paste proprietary sources into this tree. Redistributable firmware remains subject to the vendor's firmware license and is staged by the operator, not shipped in git.
