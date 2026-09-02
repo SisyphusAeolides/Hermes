@@ -29,6 +29,19 @@ int main(void)
 	assert(dumb.pitch % 64 == 0);
 	assert(dumb.size >= 1920ull * 1080ull * 4ull);
 
+	/* Width/bpp multiplication must be checked before the 32-bit pitch ABI. */
+	memset(&dumb, 0, sizeof(dumb));
+	dumb.width = 0xffffffffu;
+	dumb.height = 1;
+	dumb.bpp = 32;
+	assert(hermes_drm_logic_dumb_create(&L, &dumb) == HERMES_DRM_E_INVAL);
+
+	memset(&dumb, 0, sizeof(dumb));
+	dumb.width = 1920;
+	dumb.height = 1080;
+	dumb.bpp = 32;
+	assert(hermes_drm_logic_dumb_create(&L, &dumb) == HERMES_DRM_OK);
+
 	memset(&atom, 0, sizeof(atom));
 	atom.connector_id = 1;
 	atom.crtc_id = 1;
@@ -40,6 +53,11 @@ int main(void)
 	assert(hermes_drm_logic_atomic(&L, &atom) == HERMES_DRM_OK);
 	assert(atom.sequence == 1);
 	assert(L.active_crtcs == 1);
+
+	atom.connector_id = 2;
+	assert(hermes_drm_logic_atomic(&L, &atom) == HERMES_DRM_E_INVAL);
+	atom.connector_id = 1;
+	assert(hermes_drm_logic_disable(&L, 2) == HERMES_DRM_E_INVAL);
 
 	assert(hermes_drm_logic_disable(&L, 1) == HERMES_DRM_OK);
 	assert(L.active_crtcs == 0);

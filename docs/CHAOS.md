@@ -14,7 +14,8 @@ security decisions or hardware admission. The equations are kept in
 
 The scheduler is used at every host-side contention boundary currently in the
 stack: lockless DMA-ring acquisition, firmware chunk publication, Falcon
-MAILBOX1 polling, and the MPS control broker's command turns. It never changes
+MAILBOX1 polling, Nouveau GSP session turns, and the MPS control broker's
+command turns. It never changes
 the order or digest of firmware bytes, bypasses a hardware gate, or mints an
 Online certificate. Hardware protocol timeouts and admission remain ordinary
 evidence checks.

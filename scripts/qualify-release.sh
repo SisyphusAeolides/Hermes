@@ -66,7 +66,8 @@ for boundary in \
     'crates/hermes-drm/src/pageflip.rs:ChaosScheduler' \
     'crates/hermes-mesa/src/lib.rs:ChaosScheduler' \
     'crates/hermes-nvml/src/lib.rs:ChaosScheduler' \
-    'crates/hermes-ctl/src/mps_main.rs:ChaosScheduler'; do
+    'crates/hermes-ctl/src/mps_main.rs:ChaosScheduler' \
+    'crates/hermes-nouveau/src/gsp.rs:ChaosScheduler'; do
     file=${boundary%%:*}
     symbol=${boundary#*:}
     if ! rg -q "$symbol" "$ROOT/$file"; then

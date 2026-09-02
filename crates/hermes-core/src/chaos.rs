@@ -34,12 +34,24 @@ impl Lorenz {
         } else {
             0.01
         };
+        // The oscillator fields are public for deterministic tuning and
+        // inspection.  Sanitize externally supplied state before doing the
+        // Euler update so one bad diagnostic value cannot poison a hot path.
+        self.x = finite_clamp(self.x, -1_000.0, 1_000.0, 1.0);
+        self.y = finite_clamp(self.y, -1_000.0, 1_000.0, 1.0);
+        self.z = finite_clamp(self.z, -1_000.0, 1_000.0, 1.0);
+        self.sigma = finite_clamp(self.sigma, -1_000.0, 1_000.0, 10.0);
+        self.rho = finite_clamp(self.rho, -1_000.0, 1_000.0, 28.0);
+        self.beta = finite_clamp(self.beta, -1_000.0, 1_000.0, 8.0 / 3.0);
         let dx = self.sigma * (self.y - self.x);
         let dy = self.x * (self.rho - self.z) - self.y;
         let dz = self.x * self.y - self.beta * self.z;
         self.x += dx * dt;
         self.y += dy * dt;
         self.z += dz * dt;
+        self.x = finite_clamp(self.x, -1_000.0, 1_000.0, 1.0);
+        self.y = finite_clamp(self.y, -1_000.0, 1_000.0, 1.0);
+        self.z = finite_clamp(self.z, -1_000.0, 1_000.0, 1.0);
         self.x
     }
 }
@@ -73,12 +85,21 @@ impl Roessler {
         } else {
             0.01
         };
+        self.x = finite_clamp(self.x, -1_000.0, 1_000.0, 1.0);
+        self.y = finite_clamp(self.y, -1_000.0, 1_000.0, 1.0);
+        self.z = finite_clamp(self.z, -1_000.0, 1_000.0, 1.0);
+        self.a = finite_clamp(self.a, -1_000.0, 1_000.0, 0.2);
+        self.b = finite_clamp(self.b, -1_000.0, 1_000.0, 0.2);
+        self.c = finite_clamp(self.c, -1_000.0, 1_000.0, 5.7);
         let dx = -self.y - self.z;
         let dy = self.x + self.a * self.y;
         let dz = self.b + self.z * (self.x - self.c);
         self.x += dx * dt;
         self.y += dy * dt;
         self.z += dz * dt;
+        self.x = finite_clamp(self.x, -1_000.0, 1_000.0, 1.0);
+        self.y = finite_clamp(self.y, -1_000.0, 1_000.0, 1.0);
+        self.z = finite_clamp(self.z, -1_000.0, 1_000.0, 1.0);
         self.x
     }
 }
@@ -96,23 +117,25 @@ impl LogisticMap {
     }
 
     pub fn step(&mut self) -> f32 {
+        self.x = finite_clamp(self.x, 0.0, 1.0, 0.5);
+        self.r = finite_clamp(self.r, 0.0, 4.0, 3.99);
         self.x = self.r * self.x * (1.0 - self.x);
+        self.x = finite_clamp(self.x, 0.0, 1.0, 0.5);
         self.x
     }
 }
 
 /// Fast Taylor approximation for cos(x) avoiding libm.
-fn fast_cos(mut x: f32) -> f32 {
-    const PI2: f32 = consts::TAU;
-    while x > PI2 {
-        x -= PI2;
-    }
-    while x < 0.0 {
-        x += PI2;
-    }
-    // Shift to -pi..pi
+fn fast_cos(x: f32) -> f32 {
+    // `%` gives bounded reduction in one operation.  The previous repeated
+    // subtraction could take an effectively unbounded time for a corrupted
+    // public `t` value, and NaN would leak into every subsequent state.
+    let mut x = if x.is_finite() { x % consts::TAU } else { 0.0 };
+    // Shift to -pi..pi.
     if x > consts::PI {
-        x -= PI2;
+        x -= consts::TAU;
+    } else if x < -consts::PI {
+        x += consts::TAU;
     }
 
     let x2 = x * x;
@@ -152,6 +175,14 @@ impl Duffing {
         } else {
             0.01
         };
+        self.x = finite_clamp(self.x, -100.0, 100.0, 1.0);
+        self.v = finite_clamp(self.v, -100.0, 100.0, 0.0);
+        self.alpha = finite_clamp(self.alpha, -100.0, 100.0, -1.0);
+        self.beta = finite_clamp(self.beta, -100.0, 100.0, 1.0);
+        self.delta = finite_clamp(self.delta, -100.0, 100.0, 0.3);
+        self.gamma = finite_clamp(self.gamma, -100.0, 100.0, 0.2);
+        self.omega = finite_clamp(self.omega, -100.0, 100.0, 1.2);
+        self.t = finite_clamp(self.t, 0.0, 1_000_000.0, 0.0);
         let force = self.gamma * fast_cos(self.omega * self.t);
         let dv = force
             - self.delta * self.v
@@ -160,6 +191,9 @@ impl Duffing {
         self.x += self.v * dt;
         self.v += dv * dt;
         self.t += dt;
+        self.x = finite_clamp(self.x, -100.0, 100.0, 1.0);
+        self.v = finite_clamp(self.v, -100.0, 100.0, 0.0);
+        self.t = finite_clamp(self.t, 0.0, 1_000_000.0, 0.0);
         self.x
     }
 }
@@ -363,5 +397,47 @@ mod tests {
         assert!(snapshot.lorenz.0.is_finite());
         assert!(snapshot.roessler.0.is_finite());
         assert!(snapshot.duffing.0.is_finite());
+    }
+
+    #[test]
+    fn public_oscillator_state_cannot_hang_or_poison_output() {
+        let mut lorenz = Lorenz {
+            x: f32::NAN,
+            y: f32::INFINITY,
+            z: f32::NEG_INFINITY,
+            sigma: f32::NAN,
+            rho: f32::INFINITY,
+            beta: f32::NEG_INFINITY,
+        };
+        assert!(lorenz.step(f32::NAN).is_finite());
+
+        let mut roessler = Roessler {
+            x: f32::NAN,
+            y: f32::INFINITY,
+            z: f32::NEG_INFINITY,
+            a: f32::NAN,
+            b: f32::INFINITY,
+            c: f32::NEG_INFINITY,
+        };
+        assert!(roessler.step(f32::NAN).is_finite());
+
+        let mut logistic = LogisticMap {
+            x: f32::NAN,
+            r: f32::INFINITY,
+        };
+        assert!(logistic.step().is_finite());
+
+        let mut duffing = Duffing {
+            x: f32::NAN,
+            v: f32::INFINITY,
+            alpha: f32::NAN,
+            beta: f32::INFINITY,
+            delta: f32::NEG_INFINITY,
+            gamma: f32::NAN,
+            omega: f32::INFINITY,
+            t: f32::INFINITY,
+        };
+        assert!(duffing.step(f32::NAN).is_finite());
+        assert!(duffing.t.is_finite());
     }
 }

@@ -85,7 +85,8 @@ targets first).
 
 Chaos scheduling is a shared host-runtime subsystem, not a marketing-only
 benchmark: DMA-ring contention, firmware chunk publication, Falcon mailbox
-polling, and the MPS control broker all use the equations documented in
+polling, Nouveau GSP session turns, and the MPS control broker all use the
+equations documented in
 [`docs/CHAOS.md`](docs/CHAOS.md).
 
 The implementation and its licensing boundary are documented in

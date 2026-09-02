@@ -6,7 +6,10 @@
 
 use alloc::vec::Vec;
 
-use hermes_core::{HermesManifold, HermesPhase, ManifoldFault};
+use hermes_core::{
+    chaos::{ChaosScheduler, ChaosSnapshot},
+    HermesManifold, HermesPhase, ManifoldFault,
+};
 use hermes_gsp::{run_bringup, BringupRequest, HardwareEvidence, NvidiaGspFirmwareAuthority};
 
 use crate::chip::{chip_hint_from_device_id, NouveauChip};
@@ -117,6 +120,9 @@ pub struct GspSession {
     pub subdev: SubdevPhase,
     pub manifold: HermesManifold,
     pub nouveau_running: bool,
+    /// Shared nonlinear service state for firmware/session turns.
+    chaos: ChaosScheduler,
+    chaos_service_quantum_us: u32,
 }
 
 impl GspSession {
@@ -135,11 +141,29 @@ impl GspSession {
             subdev: SubdevPhase::Constructed,
             manifold: HermesManifold::dark(1),
             nouveau_running: false,
+            chaos: ChaosScheduler::new(),
+            chaos_service_quantum_us: 1,
         })
+    }
+
+    fn service_turn(&mut self) {
+        self.chaos_service_quantum_us = self.chaos.next_interval(0.01);
+    }
+
+    /// Current bounded host-side service interval used by the GSP session.
+    pub fn service_quantum_us(&self) -> u32 {
+        self.chaos_service_quantum_us
+    }
+
+    /// Expose attractor state for diagnostics without affecting firmware bytes
+    /// or the evidence required for an Online certificate.
+    pub fn chaos_snapshot(&self) -> ChaosSnapshot {
+        self.chaos.snapshot()
     }
 
     /// Nouveau-style "running" without Hermes Online certificate.
     pub fn mark_nouveau_running(&mut self) {
+        self.service_turn();
         self.nouveau_running = true;
         self.phase = GspPhase::RmRunning;
         self.subdev = SubdevPhase::Running;
@@ -153,6 +177,7 @@ impl GspSession {
         hardware: HardwareEvidence,
         platform: &impl hermes_core::HermesPlatform,
     ) -> Result<(), ManifoldFault> {
+        self.service_turn();
         let mut req = BringupRequest::with_defaults(self.device.identity, gsp_rm_image, authority);
         req.hardware = hardware;
         let report = run_bringup(platform, &req);
@@ -212,6 +237,8 @@ mod tests {
         let dev = NvkmDevice::new(id, "tu102");
         let mut session = GspSession::open(dev, "570.144").unwrap();
         session.mark_nouveau_running();
+        assert!((1..=50).contains(&session.service_quantum_us()));
+        assert!(session.chaos_snapshot().lyapunov_exponent.is_finite());
         assert!(session.nouveau_running_without_hermes_online());
         assert!(!session.is_hermes_online());
 

@@ -31,6 +31,43 @@ pub enum StageError {
     DigestMismatch,
 }
 
+/// Owns a staged DMA window until the caller explicitly takes it.
+///
+/// Staging performs several fallible platform operations.  Keeping the
+/// allocation in a small RAII guard means a write, publish, or scheduler
+/// failure cannot leak a DMA mapping while the bring-up path is unwinding.
+struct DmaLease<'a, P: HermesPlatform> {
+    platform: &'a P,
+    region: Option<DmaRegion<P::Dma>>,
+}
+
+impl<'a, P: HermesPlatform> DmaLease<'a, P> {
+    fn new(platform: &'a P, region: DmaRegion<P::Dma>) -> Self {
+        Self {
+            platform,
+            region: Some(region),
+        }
+    }
+
+    fn region(&self) -> DmaRegion<P::Dma> {
+        // DmaRegion is Copy by contract; retaining ownership in the guard is
+        // what ensures a failed operation still releases the exact mapping.
+        self.region.expect("DMA lease must contain a region")
+    }
+
+    fn take(mut self) -> DmaRegion<P::Dma> {
+        self.region.take().expect("DMA lease must contain a region")
+    }
+}
+
+impl<P: HermesPlatform> Drop for DmaLease<'_, P> {
+    fn drop(&mut self) {
+        if let Some(region) = self.region.take() {
+            self.platform.release_dma(region);
+        }
+    }
+}
+
 impl From<HermesFault> for StageError {
     fn from(value: HermesFault) -> Self {
         Self::Platform(value)
@@ -53,7 +90,10 @@ pub fn stage_gsp_rm_image<P: HermesPlatform>(
         return Err(StageError::EmptyImage);
     }
     let chunk_len = chunk_len.max(64).min(STAGE_CHUNK_BYTES.max(64));
-    let region = platform.allocate_dma(domain, chunk_len, 64, DmaPurpose::Firmware)?;
+    let region = DmaLease::new(
+        platform,
+        platform.allocate_dma(domain, chunk_len, 64, DmaPurpose::Firmware)?,
+    );
 
     let mut hasher = Sha256::new();
     let mut offset = 0usize;
@@ -67,11 +107,11 @@ pub fn stage_gsp_rm_image<P: HermesPlatform>(
         if slice.len() < chunk_len {
             let mut pad = alloc::vec![0u8; chunk_len];
             pad[..slice.len()].copy_from_slice(slice);
-            platform.dma_write(region, 0, &pad)?;
-            platform.dma_publish(region, 0, slice.len())?;
+            platform.dma_write(region.region(), 0, &pad)?;
+            platform.dma_publish(region.region(), 0, slice.len())?;
         } else {
-            platform.dma_write(region, 0, slice)?;
-            platform.dma_publish(region, 0, slice.len())?;
+            platform.dma_write(region.region(), 0, slice)?;
+            platform.dma_publish(region.region(), 0, slice.len())?;
         }
         hasher.update(slice);
         offset = end;
@@ -90,9 +130,9 @@ pub fn stage_gsp_rm_image<P: HermesPlatform>(
             bytes_staged: image.len() as u64,
             staged_sha256,
             chunks,
-            last_device_address: region.device_address,
+            last_device_address: region.region().device_address,
         },
-        region,
+        region.take(),
     ))
 }
 
@@ -113,6 +153,8 @@ mod tests {
         buf: UnsafeCell<[u8; 8192]>,
         len: UnsafeCell<usize>,
         published: UnsafeCell<usize>,
+        released: UnsafeCell<usize>,
+        fail_publish: UnsafeCell<bool>,
     }
     unsafe impl Sync for TinyDma {}
 
@@ -122,6 +164,8 @@ mod tests {
                 buf: UnsafeCell::new([0; 8192]),
                 len: UnsafeCell::new(0),
                 published: UnsafeCell::new(0),
+                released: UnsafeCell::new(0),
+                fail_publish: UnsafeCell::new(false),
             }
         }
     }
@@ -172,7 +216,11 @@ mod tests {
                 purpose,
             })
         }
-        fn release_dma(&self, _: DmaRegion<u32>) {}
+        fn release_dma(&self, _: DmaRegion<u32>) {
+            unsafe {
+                *self.released.get() += 1;
+            }
+        }
         fn dma_write(
             &self,
             _: DmaRegion<u32>,
@@ -198,6 +246,9 @@ mod tests {
             _: usize,
             length: usize,
         ) -> Result<(), HermesFault> {
+            if unsafe { *self.fail_publish.get() } {
+                return Err(HermesFault::DmaAccess);
+            }
             unsafe {
                 *self.published.get() += length;
             }
@@ -235,5 +286,16 @@ mod tests {
             stage_gsp_rm_image(&p, 1, &[], 4096),
             Err(StageError::EmptyImage)
         );
+    }
+
+    #[test]
+    fn failed_publish_releases_dma_window() {
+        let p = TinyDma::new();
+        unsafe {
+            *p.fail_publish.get() = true;
+        }
+        let err = stage_gsp_rm_image(&p, 1, &[0xaa; 128], 4096).unwrap_err();
+        assert_eq!(err, StageError::Platform(HermesFault::DmaAccess));
+        assert_eq!(unsafe { *p.released.get() }, 1);
     }
 }

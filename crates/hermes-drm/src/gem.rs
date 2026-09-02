@@ -62,7 +62,10 @@ impl GemObject {
             .checked_mul(bpp_bytes)
             .ok_or(GemError::InvalidSize)?;
         // Align pitch to 64 bytes (common DRM dumb convention).
-        let pitch = pitch.div_ceil(64) * 64;
+        let pitch = pitch
+            .div_ceil(64)
+            .checked_mul(64)
+            .ok_or(GemError::InvalidSize)?;
         let size = (pitch as u64)
             .checked_mul(req.height as u64)
             .ok_or(GemError::InvalidSize)?;
@@ -316,6 +319,22 @@ mod tests {
                 }
             ),
             Err(GemError::GspOffline)
+        );
+    }
+
+    #[test]
+    fn dumb_pitch_alignment_overflow_is_rejected() {
+        let mut m = GemManager::new();
+        assert_eq!(
+            m.create_dumb(
+                true,
+                &DumbCreateRequest {
+                    width: u32::MAX,
+                    height: 1,
+                    bpp: 1,
+                }
+            ),
+            Err(GemError::InvalidSize)
         );
     }
 

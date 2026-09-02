@@ -90,6 +90,7 @@ struct hermes_drm_logic {
 	int gsp_online;
 	unsigned connectors;
 	unsigned crtcs;
+	unsigned planes;
 	unsigned active_crtcs;
 	unsigned next_handle;
 	unsigned sequence;

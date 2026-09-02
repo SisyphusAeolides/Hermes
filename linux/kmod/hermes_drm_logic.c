@@ -25,6 +25,7 @@ void hermes_drm_logic_init(struct hermes_drm_logic *L, int gsp_online)
 	L->gsp_online = gsp_online ? 1 : 0;
 	L->connectors = 1;
 	L->crtcs = 1;
+	L->planes = 1;
 	L->active_crtcs = 0;
 	L->next_handle = 1;
 	L->sequence = 0;
@@ -50,7 +51,8 @@ int hermes_drm_logic_status(const struct hermes_drm_logic *L,
 int hermes_drm_logic_dumb_create(struct hermes_drm_logic *L,
 				 struct hermes_drm_dumb_create *req)
 {
-	__u32 pitch;
+	__u64 bytes_per_pixel;
+	__u64 pitch64;
 	__u64 size;
 
 	if (!L || !req)
@@ -60,16 +62,20 @@ int hermes_drm_logic_dumb_create(struct hermes_drm_logic *L,
 	if (req->width == 0 || req->height == 0 || req->bpp == 0)
 		return HERMES_DRM_E_INVAL;
 
-	pitch = req->width * ((req->bpp + 7) / 8);
-	pitch = (pitch + 63u) & ~63u;
-	size = (__u64)pitch * (__u64)req->height;
+	/* Do all geometry in 64-bit before narrowing the ABI output fields. */
+	bytes_per_pixel = ((__u64)req->bpp + 7u) / 8u;
+	pitch64 = (__u64)req->width * bytes_per_pixel;
+	if (pitch64 == 0 || pitch64 > (__u64)0xffffffffu - 63u)
+		return HERMES_DRM_E_INVAL;
+	pitch64 = (pitch64 + 63u) & ~63ull;
+	size = pitch64 * (__u64)req->height;
 	if (size > (512ull * 1024ull * 1024ull))
 		return HERMES_DRM_E_INVAL;
 
 	req->handle = L->next_handle++;
 	if (L->next_handle == 0)
 		L->next_handle = 1;
-	req->pitch = pitch;
+	req->pitch = (__u32)pitch64;
 	req->size = size;
 	return HERMES_DRM_OK;
 }
@@ -82,6 +88,9 @@ int hermes_drm_logic_atomic(struct hermes_drm_logic *L,
 	if (!L->gsp_online)
 		return HERMES_DRM_E_GSP_OFFLINE;
 	if (req->connector_id == 0 || req->crtc_id == 0 || req->plane_id == 0)
+		return HERMES_DRM_E_INVAL;
+	if (req->connector_id > L->connectors || req->crtc_id > L->crtcs ||
+	    req->plane_id > L->planes)
 		return HERMES_DRM_E_INVAL;
 	if (req->hdisplay == 0 || req->vdisplay == 0)
 		return HERMES_DRM_E_INVAL;
@@ -107,7 +116,7 @@ int hermes_drm_logic_disable(struct hermes_drm_logic *L, __u32 crtc_id)
 		return HERMES_DRM_E_INVAL;
 	if (!L->gsp_online)
 		return HERMES_DRM_E_GSP_OFFLINE;
-	if (crtc_id == 0)
+	if (crtc_id == 0 || crtc_id > L->crtcs)
 		return HERMES_DRM_E_INVAL;
 	L->active_crtcs = 0;
 	L->last_fb = 0;
