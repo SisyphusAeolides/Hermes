@@ -3,6 +3,8 @@
 //! Replaces standard linear/exponential backoff with deterministic chaos to break phase-lock
 //! scenarios, massively increasing throughput in concurrent ring-buffer submissions.
 
+use core::f32::consts;
+
 /// Lorenz attractor parameters and state
 #[derive(Clone, Copy, Debug)]
 pub struct Lorenz {
@@ -91,11 +93,11 @@ impl LogisticMap {
 
 /// Fast Taylor approximation for cos(x) avoiding libm.
 fn fast_cos(mut x: f32) -> f32 {
-    const PI2: f32 = 6.28318530718;
+    const PI2: f32 = consts::TAU;
     while x > PI2 { x -= PI2; }
     while x < 0.0 { x += PI2; }
     // Shift to -pi..pi
-    if x > 3.14159265 { x -= PI2; }
+    if x > consts::PI { x -= PI2; }
     
     let x2 = x * x;
     1.0 - (x2 / 2.0) + (x2 * x2 / 24.0) - (x2 * x2 * x2 / 720.0)
@@ -186,6 +188,12 @@ impl LyapunovEstimator {
     }
 }
 
+impl Default for LyapunovEstimator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Adaptive Chaos Scheduler
 pub struct ChaosScheduler {
     lorenz: Lorenz,
@@ -221,5 +229,11 @@ impl ChaosScheduler {
         
         // Bound the backoff to 1us - 50us
         (1.0 + (mixed % 50.0)) as u32
+    }
+}
+
+impl Default for ChaosScheduler {
+    fn default() -> Self {
+        Self::new()
     }
 }

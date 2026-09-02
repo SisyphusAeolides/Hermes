@@ -4,6 +4,8 @@
 //! Devices appear from host PCI discovery and/or explicit session binds after
 //! GSP bring-up. Telemetry that requires Online returns errors while Offline.
 
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
 use hermes_core::{
     admit_display_device, is_nvidia_turing_or_newer, nvidia_architecture, pci_identity,
     HermesManifold, HermesPhase, NVIDIA_VENDOR_ID,
@@ -136,7 +138,7 @@ fn default_name_for_device(device_id: u16) -> String {
 
 fn uuid_for(bus: &str, device_id: u16) -> String {
     // Deterministic Hermes UUID (not a hardware EEPROM read).
-    format!("GPU-{:04x}-{}", device_id, bus.replace(':', "").replace('.', ""))
+    format!("GPU-{:04x}-{}", device_id, bus.replace([':', '.'], ""))
 }
 
 fn compute_caps(device_id: u16) -> (u32, u32) {
@@ -566,7 +568,7 @@ pub extern "C" fn nvmlDeviceGetPciInfo_v3(
         };
         let g = &s.gpus[idx];
         // Parse "0000:01:00.0"
-        let parts: Vec<&str> = g.pci_bus_id.split(|c| c == ':' || c == '.').collect();
+        let parts: Vec<&str> = g.pci_bus_id.split([':', '.']).collect();
         let domain = parts
             .first()
             .and_then(|p| u32::from_str_radix(p, 16).ok())

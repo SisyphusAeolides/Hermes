@@ -209,6 +209,7 @@ impl SimPlatform {
         self.write32_calls.load(Ordering::Relaxed)
     }
 
+    #[allow(clippy::mut_from_ref)]
     fn state_mut(&self) -> &mut SimState {
         // Safety: single-threaded test contract for SimPlatform.
         unsafe { &mut *self.state.get() }

@@ -213,8 +213,8 @@ fn compat_matrix() {
         (0x2b85, "GB202 Blackwell"),
     ];
     println!(
-        "{:<8} {:<18} {:<8} {:<10} {}",
-        "PCI ID", "Name", "Turing+", "FW line", "Admit"
+        "{:<8} {:<18} {:<8} {:<10} Admit",
+        "PCI ID", "Name", "Turing+", "FW line"
     );
     for (id, name) in samples {
         let turing_plus = is_nvidia_turing_or_newer(id);

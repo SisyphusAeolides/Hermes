@@ -597,8 +597,8 @@ fn firmware_pin() {
 fn nouveau_compare() {
     println!("Hermes exclusive edges: {}", hermes_exclusive_count());
     println!(
-        "{:<32} {:<8} {:<8} {}",
-        "capability", "nouveau", "hermes", "hermes+"
+        "{:<32} {:<8} {:<8} hermes+",
+        "capability", "nouveau", "hermes"
     );
     for e in comparison_matrix() {
         println!(
@@ -1110,7 +1110,7 @@ fn dropin_catalog_cmd() {
         drop_in_has_all_kmod_names(),
         drop_in_parity_percent()
     );
-    println!("{:<10} {:<28} {}", "kind", "name", "crate");
+    println!("{:<10} {:<28} crate", "kind", "name");
     for s in DROP_IN_CATALOG {
         println!("{:<10} {:<28} {}", s.kind, s.name, s.hermes_crate);
     }

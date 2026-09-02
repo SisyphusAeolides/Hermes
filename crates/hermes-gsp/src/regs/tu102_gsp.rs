@@ -4,6 +4,7 @@
 
 #![allow(non_upper_case_globals)]
 #![allow(dead_code)]
+#![allow(clippy::eq_op, clippy::identity_op)]
 
 pub const NV_PGSP_FALCON_MAILBOX0: u32 = 0x00110040;
 /// Bitfield 31:0

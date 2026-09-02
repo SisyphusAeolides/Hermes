@@ -7,6 +7,9 @@
 //! CCCL (Thrust/CUB) host algorithms live in `hermes-cccl` and do not need a
 //! device; device offload will call into this crate once contexts exist.
 
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+#![allow(clippy::ptr_eq)]
+
 use std::sync::Mutex;
 use std::vec::Vec;
 

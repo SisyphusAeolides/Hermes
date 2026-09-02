@@ -165,7 +165,7 @@ fn query_gpu_fields(spec: &str, fmt: QueryFormat) {
     if fields.is_empty() {
         return;
     }
-    let sep = if fmt.csv { ", " } else { ", " };
+    let sep = ", ";
     if fmt.header {
         if fmt.csv {
             // Classic: name [MHz], temperature.gpu [C], ...
@@ -206,7 +206,7 @@ fn csv_header(field: &str, units: bool) -> String {
     }
 }
 
-fn query_one_field(h: u64, field: &str, online: bool, units: bool) -> String {
+fn query_one_field(h: u64, field: &str, online: bool, _units: bool) -> String {
     let na = "[N/A]";
     match field {
         "name" | "gpu_name" => {
@@ -231,11 +231,7 @@ fn query_one_field(h: u64, field: &str, online: bool, units: bool) -> String {
             }
             let mut t = 0u32;
             if nvmlDeviceGetTemperature(h, 0, &mut t) == NVML_SUCCESS {
-                if units {
-                    format!("{t}")
-                } else {
-                    format!("{t}")
-                }
+                format!("{t}")
             } else {
                 na.into()
             }

@@ -106,7 +106,7 @@ pub fn cub_layers() -> alloc::vec::Vec<&'static str> {
     use alloc::vec::Vec;
     let mut v = Vec::new();
     for m in CUB_MODULES {
-        if !v.iter().any(|x| *x == m.layer) { v.push(m.layer); }
+        if !v.contains(&m.layer) { v.push(m.layer); }
     }
     v
 }

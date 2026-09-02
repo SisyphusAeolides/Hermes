@@ -4,6 +4,8 @@
 //! Real shader compilers and full NVK are not claimed — this is the Hermes
 //! attach point that only advertises a GPU when DRM + GSP Online agree.
 
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 
@@ -236,7 +238,13 @@ pub type GLsizei = i32;
 
 static mut CURRENT_CLEAR: [f32; 4] = [0.0; 4];
 
-/// `glClearColor`
+/// `glClearColor`.
+///
+/// # Safety
+///
+/// The function has no pointer arguments. The `unsafe` ABI is retained for
+/// compatibility with callers that model the legacy OpenGL entry point as
+/// unsafe.
 #[no_mangle]
 pub unsafe extern "C" fn glClearColor(r: f32, g: f32, b: f32, a: f32) {
     CURRENT_CLEAR = [r, g, b, a];

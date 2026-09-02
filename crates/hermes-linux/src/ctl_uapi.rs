@@ -222,7 +222,7 @@ pub fn hermes_ctl_ioctl_demote() -> u64 {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct HermesMeasureFw {
     pub byte_length: u32,
     pub sha256: [u8; 32],
@@ -230,19 +230,6 @@ pub struct HermesMeasureFw {
     pub phase: u32,
     pub online: u32,
     pub status: u32,
-}
-
-impl Default for HermesMeasureFw {
-    fn default() -> Self {
-        Self {
-            byte_length: 0,
-            sha256: [0; 32],
-            admitted: 0,
-            phase: 0,
-            online: 0,
-            status: 0,
-        }
-    }
 }
 
 #[repr(C)]

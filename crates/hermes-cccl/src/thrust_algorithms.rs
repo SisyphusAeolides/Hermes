@@ -93,7 +93,7 @@ pub const HERMES_HOST_IMPLEMENTED: &[&str] = &[
 pub fn thrust_header_count() -> usize { THRUST_PUBLIC_HEADERS.len() }
 
 pub fn is_public_thrust_header(stem: &str) -> bool {
-    THRUST_PUBLIC_HEADERS.iter().any(|h| *h == stem)
+    THRUST_PUBLIC_HEADERS.contains(&stem)
 }
 
 #[cfg(test)]
