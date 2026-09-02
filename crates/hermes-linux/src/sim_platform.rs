@@ -11,7 +11,7 @@ use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use hermes_abi::hermes::HermesPciIdentity;
 use hermes_core::{
-    DmaPurpose, DmaRegion, HermesFault, HermesPlatform, MmioWindow, is_nvidia_turing_or_newer,
+    is_nvidia_turing_or_newer, DmaPurpose, DmaRegion, HermesFault, HermesPlatform, MmioWindow,
 };
 
 pub type SimDomain = u32;
@@ -462,7 +462,9 @@ impl HermesPlatform for SimPlatform {
         if !slot.live {
             return Err(HermesFault::DmaAccess);
         }
-        let end = offset.checked_add(bytes.len()).ok_or(HermesFault::DmaAddressOverflow)?;
+        let end = offset
+            .checked_add(bytes.len())
+            .ok_or(HermesFault::DmaAddressOverflow)?;
         if end > slot.length {
             return Err(HermesFault::DmaAccess);
         }
@@ -482,7 +484,9 @@ impl HermesPlatform for SimPlatform {
         if !slot.live {
             return Err(HermesFault::DmaAccess);
         }
-        let end = offset.checked_add(bytes.len()).ok_or(HermesFault::DmaAddressOverflow)?;
+        let end = offset
+            .checked_add(bytes.len())
+            .ok_or(HermesFault::DmaAddressOverflow)?;
         if end > slot.length {
             return Err(HermesFault::DmaAccess);
         }
@@ -502,7 +506,9 @@ impl HermesPlatform for SimPlatform {
         if !slot.live {
             return Err(HermesFault::DmaAccess);
         }
-        let end = offset.checked_add(length).ok_or(HermesFault::DmaAddressOverflow)?;
+        let end = offset
+            .checked_add(length)
+            .ok_or(HermesFault::DmaAddressOverflow)?;
         if end > slot.length {
             return Err(HermesFault::DmaAccess);
         }
@@ -529,10 +535,10 @@ impl HermesPlatform for SimPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hermes_core::{NVIDIA_VENDOR_ID, pci_identity};
+    use hermes_core::{pci_identity, NVIDIA_VENDOR_ID};
 
     #[test]
-    fn isolation_mmio_dma_paths_work_and_fail_closed() {
+    fn isolation_mmio_dma_paths_work_and_preserve_offline_state() {
         let plat = SimPlatform::new();
         let id = pci_identity(NVIDIA_VENDOR_ID, 0x1fb9, 0x03, 0x00);
         let domain = plat.isolate_device(id).expect("isolate");
@@ -565,10 +571,7 @@ mod tests {
         let plat = SimPlatform::new();
         plat.set_fail_isolation(true);
         let id = pci_identity(NVIDIA_VENDOR_ID, 0x1fb9, 0x03, 0x00);
-        assert_eq!(
-            plat.isolate_device(id),
-            Err(HermesFault::DeviceIsolation)
-        );
+        assert_eq!(plat.isolate_device(id), Err(HermesFault::DeviceIsolation));
     }
 
     #[test]

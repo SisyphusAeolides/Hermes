@@ -6,6 +6,7 @@
 
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
+use hermes_core::chaos::{ChaosScheduler, ChaosSnapshot};
 use hermes_core::{
     admit_display_device, is_nvidia_turing_or_newer, nvidia_architecture, pci_identity,
     HermesManifold, HermesPhase, NVIDIA_VENDOR_ID,
@@ -70,11 +71,16 @@ pub struct SessionDeviceSnapshot {
 struct NvmlState {
     initialized: bool,
     gpus: Vec<BoundGpu>,
+    /// Shared nonlinear service state for telemetry/process-table turns.
+    chaos: ChaosScheduler,
+    chaos_service_quantum_us: u32,
 }
 
 static STATE: Mutex<NvmlState> = Mutex::new(NvmlState {
     initialized: false,
     gpus: Vec::new(),
+    chaos: ChaosScheduler::new(),
+    chaos_service_quantum_us: 1,
 });
 
 fn with_state<F, R>(f: F) -> R
@@ -82,7 +88,14 @@ where
     F: FnOnce(&mut NvmlState) -> R,
 {
     let mut guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    let quantum = guard.chaos.next_interval(0.01);
+    guard.chaos_service_quantum_us = quantum;
     f(&mut guard)
+}
+
+/// Return chaos telemetry for NVML/device-management service turns.
+pub fn hermes_nvml_chaos_snapshot() -> ChaosSnapshot {
+    with_state(|s| s.chaos.snapshot())
 }
 
 fn handle_to_index(h: NvmlDevice_t) -> Option<usize> {
@@ -367,7 +380,12 @@ pub fn hermes_nvml_register_process(
 }
 
 pub fn hermes_nvml_process_count(gpu_index: usize) -> usize {
-    with_state(|s| s.gpus.get(gpu_index).map(|g| g.processes.len()).unwrap_or(0))
+    with_state(|s| {
+        s.gpus
+            .get(gpu_index)
+            .map(|g| g.processes.len())
+            .unwrap_or(0)
+    })
 }
 
 pub fn hermes_nvml_format_process_lines(gpu_index: usize) -> Vec<String> {
@@ -411,6 +429,8 @@ pub fn hermes_nvml_reset() {
     with_state(|s| {
         s.initialized = false;
         s.gpus.clear();
+        s.chaos = ChaosScheduler::new();
+        s.chaos_service_quantum_us = 1;
     });
 }
 
@@ -693,7 +713,10 @@ pub extern "C" fn nvmlDeviceGetUtilizationRates(
 }
 
 #[no_mangle]
-pub extern "C" fn nvmlDeviceGetPowerUsage(device: NvmlDevice_t, milliwatts: *mut u32) -> NvmlReturn {
+pub extern "C" fn nvmlDeviceGetPowerUsage(
+    device: NvmlDevice_t,
+    milliwatts: *mut u32,
+) -> NvmlReturn {
     if milliwatts.is_null() {
         return NVML_ERROR_INVALID_ARGUMENT;
     }
@@ -764,10 +787,7 @@ pub extern "C" fn nvmlDeviceGetCudaComputeCapability(
 }
 
 #[no_mangle]
-pub extern "C" fn nvmlDeviceGetPersistenceMode(
-    device: NvmlDevice_t,
-    mode: *mut u32,
-) -> NvmlReturn {
+pub extern "C" fn nvmlDeviceGetPersistenceMode(device: NvmlDevice_t, mode: *mut u32) -> NvmlReturn {
     if mode.is_null() {
         return NVML_ERROR_INVALID_ARGUMENT;
     }
@@ -884,7 +904,7 @@ pub extern "C" fn nvmlDeviceGetBrand(device: NvmlDevice_t, brand: *mut u32) -> N
     })
 }
 
-/// Fan speed percent. Offline → not supported (fail-closed, not a fake 0).
+/// Fan speed percent. Offline → not supported (no fabricated value).
 #[no_mangle]
 pub extern "C" fn nvmlDeviceGetFanSpeed(device: NvmlDevice_t, speed: *mut u32) -> NvmlReturn {
     if speed.is_null() {
@@ -1121,10 +1141,7 @@ fn arch_for_device(device_id: u16) -> u32 {
 }
 
 #[no_mangle]
-pub extern "C" fn nvmlDeviceGetArchitecture(
-    device: NvmlDevice_t,
-    arch: *mut u32,
-) -> NvmlReturn {
+pub extern "C" fn nvmlDeviceGetArchitecture(device: NvmlDevice_t, arch: *mut u32) -> NvmlReturn {
     if arch.is_null() {
         return NVML_ERROR_INVALID_ARGUMENT;
     }
@@ -1144,10 +1161,7 @@ pub extern "C" fn nvmlDeviceGetArchitecture(
 }
 
 #[no_mangle]
-pub extern "C" fn nvmlDeviceSetPersistenceMode(
-    device: NvmlDevice_t,
-    mode: u32,
-) -> NvmlReturn {
+pub extern "C" fn nvmlDeviceSetPersistenceMode(device: NvmlDevice_t, mode: u32) -> NvmlReturn {
     with_state(|s| {
         if !s.initialized {
             return NVML_ERROR_UNINITIALIZED;
@@ -1283,10 +1297,7 @@ pub extern "C" fn nvmlDeviceGetFBCSessions(
 }
 
 #[no_mangle]
-pub extern "C" fn nvmlDeviceGetFBCStats(
-    device: NvmlDevice_t,
-    stats: *mut u8,
-) -> NvmlReturn {
+pub extern "C" fn nvmlDeviceGetFBCStats(device: NvmlDevice_t, stats: *mut u8) -> NvmlReturn {
     if stats.is_null() {
         return NVML_ERROR_INVALID_ARGUMENT;
     }
@@ -1309,7 +1320,7 @@ pub extern "C" fn nvmlDeviceGetFBCStats(
     })
 }
 
-/// vGPU mode — physical GPU reports non-vGPU (fail-closed, not inventing vGPU).
+/// vGPU mode — physical GPU reports non-vGPU (no fabricated vGPU state).
 pub const NVML_DEVICE_VGPU_CAPABILITY_NONE: u32 = 0;
 
 #[no_mangle]
@@ -1841,15 +1852,9 @@ mod tests {
         assert_eq!(nvmlDeviceGetPerformanceState(h, &mut pstate), NVML_SUCCESS);
         assert_eq!(pstate, 0);
         let mut width = 0u32;
-        assert_eq!(
-            nvmlDeviceGetMaxPcieLinkWidth(h, &mut width),
-            NVML_SUCCESS
-        );
+        assert_eq!(nvmlDeviceGetMaxPcieLinkWidth(h, &mut width), NVML_SUCCESS);
         assert_eq!(width, 16);
-        assert_eq!(
-            nvmlDeviceGetCurrPcieLinkWidth(h, &mut width),
-            NVML_SUCCESS
-        );
+        assert_eq!(nvmlDeviceGetCurrPcieLinkWidth(h, &mut width), NVML_SUCCESS);
         let mut limit = 0u32;
         assert_eq!(
             nvmlDeviceGetPowerManagementLimit(h, &mut limit),
@@ -1876,10 +1881,7 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         hermes_nvml_reset();
         // Build a tiny fake sysfs tree for one Turing device.
-        let root = std::env::temp_dir().join(format!(
-            "hermes-nvml-sysfs-{}",
-            std::process::id()
-        ));
+        let root = std::env::temp_dir().join(format!("hermes-nvml-sysfs-{}", std::process::id()));
         let dev = root.join("0000:01:00.0");
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&dev).unwrap();
@@ -1918,7 +1920,12 @@ mod tests {
         assert!(!hermes_nvml_register_process(0, 1234, 1024, "x"));
         assert_eq!(hermes_nvml_process_count(0), 0);
         assert!(hermes_nvml_promote_first_sim_online());
-        assert!(hermes_nvml_register_process(0, 1234, 128 * 1024 * 1024, "hermes-test"));
+        assert!(hermes_nvml_register_process(
+            0,
+            1234,
+            128 * 1024 * 1024,
+            "hermes-test"
+        ));
         assert_eq!(hermes_nvml_process_count(0), 1);
         let mut h = 0u64;
         assert_eq!(nvmlDeviceGetHandleByIndex_v2(0, &mut h), NVML_SUCCESS);
@@ -1960,9 +1967,21 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         hermes_nvml_reset();
         let mut count = 0u32;
-        assert_eq!(
-            nvmlDeviceGetCount_v2(&mut count),
-            NVML_ERROR_UNINITIALIZED
-        );
+        assert_eq!(nvmlDeviceGetCount_v2(&mut count), NVML_ERROR_UNINITIALIZED);
+    }
+
+    #[test]
+    fn nvml_service_turns_expose_bounded_chaos_state() {
+        let _g = TEST_LOCK.lock().unwrap();
+        hermes_nvml_reset();
+        let before = hermes_nvml_chaos_snapshot();
+        assert!(before.lyapunov_exponent.is_finite());
+        assert_eq!(nvmlInit_v2(), NVML_SUCCESS);
+        let mut count = 0u32;
+        assert_eq!(nvmlDeviceGetCount_v2(&mut count), NVML_SUCCESS);
+        let after = hermes_nvml_chaos_snapshot();
+        assert!((1..=50).contains(&after.last_interval_us));
+        assert!(after.lyapunov_exponent.is_finite());
+        hermes_nvml_reset();
     }
 }

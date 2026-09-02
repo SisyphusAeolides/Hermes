@@ -1,9 +1,8 @@
 //! Source-pinned GSP-RM firmware manifests and admission.
 
 use hermes_core::vendor::{
-    nvidia_architecture_hint,
-    NVIDIA_ARCHITECTURE_ADA, NVIDIA_ARCHITECTURE_AMPERE, NVIDIA_ARCHITECTURE_BLACKWELL,
-    NVIDIA_ARCHITECTURE_HOPPER, NVIDIA_ARCHITECTURE_TURING,
+    nvidia_architecture_hint, NVIDIA_ARCHITECTURE_ADA, NVIDIA_ARCHITECTURE_AMPERE,
+    NVIDIA_ARCHITECTURE_BLACKWELL, NVIDIA_ARCHITECTURE_HOPPER, NVIDIA_ARCHITECTURE_TURING,
 };
 use hermes_core::HermesFault;
 use sha2::{Digest, Sha256};
@@ -111,18 +110,46 @@ pub const NVIDIA_GSP_RM_610_43_03: [NvidiaGspFirmwareManifest; 2] = [
     ),
 ];
 
-/// Default multi-release allow-list (610.43.02 host + 610.43.03 pin).
-pub const NVIDIA_GSP_RM_DEFAULT_ALLOW_LIST: [NvidiaGspFirmwareManifest; 4] = [
+/// Host-measured **610.57.04** GSP-RM pins. This is the current
+/// linux-firmware release staged on the ArachOS qualification host.
+pub const NVIDIA_GSP_RM_610_57_04: [NvidiaGspFirmwareManifest; 2] = [
+    NvidiaGspFirmwareManifest::new(
+        FirmwareFamily::Tu10x,
+        firmware_version(610, 57, 4),
+        29_381_504,
+        [
+            0xd1, 0x57, 0xe3, 0xb7, 0xdd, 0x5d, 0xa2, 0xca, 0x8d, 0x1c, 0xcb, 0x6c, 0xa9, 0x89,
+            0x58, 0xf9, 0xe3, 0x5d, 0x10, 0xa9, 0xef, 0x73, 0x26, 0x27, 0x7e, 0xba, 0xc1, 0x33,
+            0xe4, 0xb0, 0xd1, 0xa7,
+        ],
+    ),
+    NvidiaGspFirmwareManifest::new(
+        FirmwareFamily::Ga10x,
+        firmware_version(610, 57, 4),
+        84_310_168,
+        [
+            0xc0, 0x15, 0x69, 0x54, 0xf3, 0xe0, 0x48, 0xd5, 0x60, 0x11, 0x52, 0x4e, 0x0c, 0x2a,
+            0xe2, 0x88, 0x1b, 0xb6, 0xdb, 0x81, 0x73, 0xb5, 0x3f, 0x9b, 0x2f, 0x4e, 0xb9, 0x41,
+            0x97, 0xf0, 0x29, 0x99,
+        ],
+    ),
+];
+
+/// Default multi-release allow-list (610.43.02, 610.43.03, and 610.57.04).
+pub const NVIDIA_GSP_RM_DEFAULT_ALLOW_LIST: [NvidiaGspFirmwareManifest; 6] = [
     NVIDIA_GSP_RM_610_43_02[0],
     NVIDIA_GSP_RM_610_43_02[1],
     NVIDIA_GSP_RM_610_43_03[0],
     NVIDIA_GSP_RM_610_43_03[1],
+    NVIDIA_GSP_RM_610_57_04[0],
+    NVIDIA_GSP_RM_610_57_04[1],
 ];
 
 /// Classifies device IDs into GSP firmware lines. Unknown IDs return None.
 pub const fn firmware_family_for_device(device_id: u16) -> Option<FirmwareFamily> {
     let architecture = nvidia_architecture_hint(device_id);
-    if architecture & NVIDIA_ARCHITECTURE_TURING != 0 || (device_id >= 0x2000 && device_id <= 0x20ff)
+    if architecture & NVIDIA_ARCHITECTURE_TURING != 0
+        || (device_id >= 0x2000 && device_id <= 0x20ff)
     {
         return Some(FirmwareFamily::Tu10x);
     }
@@ -169,7 +196,13 @@ impl<'a> NvidiaGspFirmwareAuthority<'a> {
         }
     }
 
-    /// Combined allow-list: host 610.43.02 + staged 610.43.03 pins.
+    pub const fn default_610_57_04() -> Self {
+        Self {
+            allow_list: &NVIDIA_GSP_RM_610_57_04,
+        }
+    }
+
+    /// Combined allow-list for all supported staged OpenRM releases.
     pub const fn default_allow_list() -> Self {
         Self {
             allow_list: &NVIDIA_GSP_RM_DEFAULT_ALLOW_LIST,
@@ -178,12 +211,9 @@ impl<'a> NvidiaGspFirmwareAuthority<'a> {
 
     /// Admit staged firmware bytes for a device only on exact length+hash match
     /// **and** GSP-RM ELF structural contract (RISC-V REL + `.fwimage` + `.fwversion`).
-    pub fn admit(
-        &self,
-        device_id: u16,
-        image: &[u8],
-    ) -> Result<VerifiedFirmware, HermesFault> {
-        let family = firmware_family_for_device(device_id).ok_or(HermesFault::UnsupportedArchitecture)?;
+    pub fn admit(&self, device_id: u16, image: &[u8]) -> Result<VerifiedFirmware, HermesFault> {
+        let family =
+            firmware_family_for_device(device_id).ok_or(HermesFault::UnsupportedArchitecture)?;
         let length = u32::try_from(image.len()).map_err(|_| HermesFault::FirmwareSize)?;
         if length == 0 {
             return Err(HermesFault::FirmwareMissing);
@@ -193,9 +223,10 @@ impl<'a> NvidiaGspFirmwareAuthority<'a> {
         }
 
         // Structural gate before hashing large images when length cannot match.
-        let may_match_length = self.allow_list.iter().any(|m| {
-            m.family == family && m.byte_length == length && m.valid()
-        });
+        let may_match_length = self
+            .allow_list
+            .iter()
+            .any(|m| m.family == family && m.byte_length == length && m.valid());
         if !may_match_length {
             return Err(HermesFault::FirmwareRejected);
         }
@@ -230,10 +261,12 @@ impl<'a> NvidiaGspFirmwareAuthority<'a> {
 
     /// Reject without hashing when length alone cannot match any allow-list entry.
     pub fn reject_length_mismatch(&self, device_id: u16, length: u32) -> Result<(), HermesFault> {
-        let family = firmware_family_for_device(device_id).ok_or(HermesFault::UnsupportedArchitecture)?;
-        let any = self.allow_list.iter().any(|m| {
-            m.family == family && m.byte_length == length && m.valid()
-        });
+        let family =
+            firmware_family_for_device(device_id).ok_or(HermesFault::UnsupportedArchitecture)?;
+        let any = self
+            .allow_list
+            .iter()
+            .any(|m| m.family == family && m.byte_length == length && m.valid());
         if any {
             Ok(())
         } else {
@@ -257,10 +290,22 @@ mod tests {
 
     #[test]
     fn family_selection_turing_vs_ga10x() {
-        assert_eq!(firmware_family_for_device(0x1fb9), Some(FirmwareFamily::Tu10x));
-        assert_eq!(firmware_family_for_device(0x1e04), Some(FirmwareFamily::Tu10x));
-        assert_eq!(firmware_family_for_device(0x2204), Some(FirmwareFamily::Ga10x));
-        assert_eq!(firmware_family_for_device(0x2684), Some(FirmwareFamily::Ga10x));
+        assert_eq!(
+            firmware_family_for_device(0x1fb9),
+            Some(FirmwareFamily::Tu10x)
+        );
+        assert_eq!(
+            firmware_family_for_device(0x1e04),
+            Some(FirmwareFamily::Tu10x)
+        );
+        assert_eq!(
+            firmware_family_for_device(0x2204),
+            Some(FirmwareFamily::Ga10x)
+        );
+        assert_eq!(
+            firmware_family_for_device(0x2684),
+            Some(FirmwareFamily::Ga10x)
+        );
         assert_eq!(firmware_family_for_device(0x1db6), None);
     }
 
@@ -271,9 +316,7 @@ mod tests {
             auth.reject_length_mismatch(0x1fb9, 100),
             Err(HermesFault::FirmwareRejected)
         );
-        assert!(auth
-            .reject_length_mismatch(0x1fb9, 29_352_832)
-            .is_ok());
+        assert!(auth.reject_length_mismatch(0x1fb9, 29_352_832).is_ok());
     }
 
     #[test]
@@ -321,6 +364,13 @@ mod tests {
         for m in NVIDIA_GSP_RM_610_43_02 {
             assert!(m.valid());
         }
-        assert_eq!(NVIDIA_GSP_RM_DEFAULT_ALLOW_LIST.len(), 4);
+        assert_eq!(NVIDIA_GSP_RM_DEFAULT_ALLOW_LIST.len(), 6);
+    }
+
+    #[test]
+    fn host_610_57_04_pins_are_valid() {
+        for m in NVIDIA_GSP_RM_610_57_04 {
+            assert!(m.valid());
+        }
     }
 }

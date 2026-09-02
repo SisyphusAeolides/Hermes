@@ -46,7 +46,7 @@ Nouveau couples GSP to DRM/KMS and Mesa (NVK / Nouveau GL). Hermes mirrors that
 stack with:
 
 - `crates/hermes-drm` — GSP-gated atomic modeset foundation
-- `crates/hermes-mesa` — Vulkan ICD + GL stubs + present via atomic commit
+- `crates/hermes-mesa` — Vulkan ICD/GL integration surface + present via atomic commit
 
 See `docs/DRM_MESA.md`. Capability matrix marks `DrmKmsDisplay` and
 `MesaUserspace` as present on both sides; Hermes still owns exclusive edges for

@@ -305,7 +305,7 @@ CCCL version inventoried: **{version}**
 | Thrust public headers | {len(algs)} | Catalog + host subset |
 | CUB modules | {inv['cub_module_count']} | Catalog + layer map |
 | libcu++ headers | {len(libcu)} | Catalog |
-| Requires GSP Online | No | **Yes** (fail-closed) |
+| Requires GSP Online | No | **Yes** (evidence-gated) |
 | Driver/runtime ABI shell | External CUDA | `hermes-cuda` |
 | Formal models | No | Idris/Agda/Fortran |
 

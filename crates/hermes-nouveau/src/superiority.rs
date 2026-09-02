@@ -1,4 +1,4 @@
-//! Explicit Hermes > Nouveau capability matrix (fail-closed Online).
+//! Explicit Hermes > Nouveau capability matrix (evidence-gated Online).
 
 use alloc::vec::Vec;
 
@@ -58,7 +58,7 @@ pub fn comparison_matrix() -> Vec<HermesEdge> {
         HermesEdge {
             capability: Capability::MesaUserspace,
             nouveau: true,
-            // hermes-mesa: Vulkan ICD + GL stubs + present via atomic modeset
+            // hermes-mesa: Vulkan ICD + GL dispatch + present via atomic modeset
             hermes: true,
         },
         HermesEdge {

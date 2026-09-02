@@ -26,7 +26,9 @@ fn main() {
     }
 
     let verbose = args.iter().any(|a| a == "--verbose");
-    let disable = args.iter().any(|a| a == "--no-persistence-mode" || a == "--disable");
+    let disable = args
+        .iter()
+        .any(|a| a == "--no-persistence-mode" || a == "--disable");
     let mode: u32 = if disable { 0 } else { 1 };
     let foreground = args.iter().any(|a| a == "--foreground" || a == "-f");
     let stay = args
@@ -76,7 +78,7 @@ fn main() {
 
     if stay > 0 || foreground {
         if verbose {
-            eprintln!("staying foreground for {stay}s (0 = until signal stub sleep 1s)");
+            eprintln!("staying foreground for {stay}s (0 = one-second foreground hold)");
         }
         let secs = if stay == 0 { 1 } else { stay };
         thread::sleep(Duration::from_secs(secs));

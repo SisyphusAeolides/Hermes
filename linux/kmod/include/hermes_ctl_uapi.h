@@ -40,7 +40,7 @@ struct hermes_measure_fw {
  * APPLY_EVIDENCE: progressive host evidence. firmware_measured only honored if
  * a prior MEASURE_FW admitted (or force_sim with allow_sim_promote).
  * Other bits are operator-asserted host facts; Online still requires all true
- * via hermes_run_bringup (fail-closed).
+ * via hermes_run_bringup.
  */
 struct hermes_apply_evidence {
 	__u32 iommu_isolated;

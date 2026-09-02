@@ -7,12 +7,12 @@ usage() {
   printf '%s\n' "usage: $0 FIRMWARE_ROOT TARGET_DIR [VERSION]"
   printf '%s\n' "  FIRMWARE_ROOT  e.g. /lib/firmware"
   printf '%s\n' "  TARGET_DIR     must be under target/hermes-gsp/"
-  printf '%s\n' "  VERSION        default: 610.43.02"
+  printf '%s\n' "  VERSION        default: 610.57.04"
 }
 
 firmware_root=${1:?$(usage)}
 target_directory=${2:?$(usage)}
-version=${3:-610.43.02}
+version=${3:-610.57.04}
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 case "$target_directory" in

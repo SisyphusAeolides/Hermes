@@ -9,9 +9,10 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 
+use hermes_core::chaos::{ChaosScheduler, ChaosSnapshot};
 use hermes_drm::{
-    page_flip, AtomicCommit, AtomicRequest, DisplayMode, DrmDevice, Framebuffer,
-    PageFlipRequest, PixelFormat,
+    page_flip, AtomicCommit, AtomicRequest, DisplayMode, DrmDevice, Framebuffer, PageFlipRequest,
+    PixelFormat,
 };
 
 pub mod icd;
@@ -31,6 +32,9 @@ struct MesaState {
     vk_instances: u32,
     vk_devices: u32,
     gl_contexts: u32,
+    /// Shared nonlinear service state for host-side queue/dispatch turns.
+    chaos: ChaosScheduler,
+    chaos_service_quantum_us: u32,
 }
 
 static STATE: Mutex<MesaState> = Mutex::new(MesaState {
@@ -38,6 +42,8 @@ static STATE: Mutex<MesaState> = Mutex::new(MesaState {
     vk_instances: 0,
     vk_devices: 0,
     gl_contexts: 0,
+    chaos: ChaosScheduler::new(),
+    chaos_service_quantum_us: 1,
 });
 
 fn with_state<F, R>(f: F) -> R
@@ -45,7 +51,14 @@ where
     F: FnOnce(&mut MesaState) -> R,
 {
     let mut g = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    let quantum = g.chaos.next_interval(0.01);
+    g.chaos_service_quantum_us = quantum;
     f(&mut g)
+}
+
+/// Return chaos telemetry for the Vulkan/GL dispatch and DRM queue boundary.
+pub fn hermes_mesa_chaos_snapshot() -> ChaosSnapshot {
+    with_state(|s| s.chaos.snapshot())
 }
 
 pub fn hermes_mesa_set_gsp_online(online: bool) {
@@ -74,6 +87,8 @@ pub fn hermes_mesa_reset() {
         s.vk_instances = 0;
         s.vk_devices = 0;
         s.gl_contexts = 0;
+        s.chaos = ChaosScheduler::new();
+        s.chaos_service_quantum_us = 1;
     });
     INSTANCE_COUNT.store(0, Ordering::SeqCst);
     DEVICE_COUNT.store(0, Ordering::SeqCst);
@@ -330,7 +345,9 @@ pub mod present {
             return Err(PresentError::Offline);
         }
         with_state(|s| {
-            let drm = s.drm.get_or_insert_with(|| DrmDevice::virtual_desktop(true));
+            let drm = s
+                .drm
+                .get_or_insert_with(|| DrmDevice::virtual_desktop(true));
             drm.set_gsp_online(true);
             if drm.framebuffers.is_empty() {
                 let fb = Framebuffer::new(10, 1920, 1080, PixelFormat::Xrgb8888, 0x2000)
@@ -346,9 +363,7 @@ pub mod present {
                 mode: DisplayMode::fhd_60(),
                 active: true,
             };
-            let r = atom
-                .commit(drm, &req)
-                .map_err(PresentError::Modeset)?;
+            let r = atom.commit(drm, &req).map_err(PresentError::Modeset)?;
             Ok(r.sequence)
         })
     }
@@ -358,7 +373,9 @@ pub mod present {
             return Err(PresentError::Offline);
         }
         with_state(|s| {
-            let drm = s.drm.get_or_insert_with(|| DrmDevice::virtual_desktop(true));
+            let drm = s
+                .drm
+                .get_or_insert_with(|| DrmDevice::virtual_desktop(true));
             drm.set_gsp_online(true);
             let dumb = drm
                 .create_dumb(1920, 1080, 32)
@@ -522,6 +539,25 @@ mod tests {
         let seq = hermes_present_gem_flip(0x0000_00ff).unwrap();
         assert!(seq >= 1);
         assert!(hermes_vulkan_icd_json().contains("libhermes_mesa"));
+        hermes_mesa_reset();
+    }
+
+    #[test]
+    fn mesa_dispatch_exposes_bounded_chaos_telemetry() {
+        let _g = T.lock().unwrap();
+        hermes_mesa_reset();
+        let before = hermes_mesa_chaos_snapshot();
+        assert!(before.lyapunov_exponent.is_finite());
+        hermes_mesa_set_gsp_online(true);
+        let mut inst = 0u64;
+        assert_eq!(
+            vkCreateInstance(core::ptr::null(), core::ptr::null(), &mut inst),
+            VK_SUCCESS
+        );
+        let after = hermes_mesa_chaos_snapshot();
+        assert!((1..=50).contains(&after.last_interval_us));
+        assert!(after.lyapunov_exponent.is_finite());
+        vkDestroyInstance(inst, core::ptr::null());
         hermes_mesa_reset();
     }
 }

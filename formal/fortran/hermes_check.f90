@@ -6,7 +6,7 @@ program hermes_check
        ignite, shutdown_session, map_bar, unmap_bar
   use hermes_rings, only: arm_command, arm_event, pair_rings, take_slot, &
        retire_slot, disarm
-  use hermes_fail_closed, only: probe_gpu, activate_gpu, fault_gpu, contain_gpu, &
+  use hermes_lifecycle, only: probe_gpu, activate_gpu, fault_gpu, contain_gpu, &
        release_gpu, gpu_phase
   use hermes_wpr, only: observe_framebuffer, observe_dma, observe_boot_offsets, &
        build_plan, submit_booter_load, observe_wpr2_active, complete_booter
@@ -70,7 +70,7 @@ program hermes_check
   transport = retire_slot(slot)
   call disarm(transport)
 
-  ! Fail-closed lifecycle
+  ! Evidence-tracked lifecycle
   probe = probe_gpu()
   live = activate_gpu(probe)
   phase = gpu_phase(.true., .false.)

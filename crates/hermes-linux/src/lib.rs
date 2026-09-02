@@ -1,7 +1,7 @@
 //! Linux drop-in personality for the NVIDIA open kernel module set.
 //!
 //! Hermes presents the same module and device node names operators expect
-//! when replacing `nvidia` / `nvidia-settings`. Activation remains fail-closed:
+//! when replacing `nvidia` / `nvidia-settings`. Activation is evidence-gated:
 //! exporting these names never implies the GPU is online.
 //!
 //! The shared GSP bring-up path lives in `hermes_gsp::run_bringup` and is
@@ -20,16 +20,14 @@ pub use ctl_uapi::{
     hermes_ctl_ioctl_measure_fw, hermes_ctl_ioctl_sim_promote, hermes_ctl_ioctl_status,
     hermes_ctl_module_mask_compose, hermes_drm_ioctl_get_edid, hermes_drm_ioctl_get_prop,
     hermes_drm_ioctl_status, module_sysfs_path, HermesApplyEvidence, HermesCtlStatus,
-    HermesDrmEdid, HermesDrmPropGet, HermesDrmStatus, HermesMeasureFw,
-    HERMES_CTL_STATUS_VERSION, HERMES_DRM_PROP_EDID, HERMES_MOD_ALL_OPEN_STACK,
-    HERMES_MOD_DRM, HERMES_MOD_MODESET, HERMES_MOD_NVIDIA, HERMES_MOD_PEERMEM, HERMES_MOD_UVM,
+    HermesDrmEdid, HermesDrmPropGet, HermesDrmStatus, HermesMeasureFw, HERMES_CTL_STATUS_VERSION,
+    HERMES_DRM_PROP_EDID, HERMES_MOD_ALL_OPEN_STACK, HERMES_MOD_DRM, HERMES_MOD_MODESET,
+    HERMES_MOD_NVIDIA, HERMES_MOD_PEERMEM, HERMES_MOD_UVM,
 };
 
 use hermes_abi::hermes::HermesPciIdentity;
-use hermes_core::{
-    AdmittedDevice, HermesManifold, HermesPhase, admit_display_device,
-};
-use hermes_gsp::{BringupReport, BringupRequest, HardwareEvidence, run_bringup};
+use hermes_core::{admit_display_device, AdmittedDevice, HermesManifold, HermesPhase};
+use hermes_gsp::{run_bringup, BringupReport, BringupRequest, HardwareEvidence};
 
 pub use sim_platform::SimPlatform;
 
@@ -97,7 +95,7 @@ pub const MODULE_SURFACES: &[ModuleSurface] = &[
     ModuleSurface {
         name: modules::NVIDIA_MODESET,
         replaces: modules::NVIDIA_MODESET,
-        description: "Display modeset broker (fail-closed until GSP online)",
+        description: "Display modeset broker (evidence-gated until GSP online)",
     },
     ModuleSurface {
         name: modules::NVIDIA_UVM,
@@ -390,10 +388,10 @@ pub fn sim_full_hardware() -> HardwareEvidence {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hermes_core::{NVIDIA_VENDOR_ID, pci_identity};
+    use hermes_core::{pci_identity, NVIDIA_VENDOR_ID};
     use hermes_gsp::{
-        FirmwareFamily, NvidiaGspFirmwareAuthority, NvidiaGspFirmwareManifest, firmware_version,
-        sha256_bytes,
+        firmware_version, sha256_bytes, FirmwareFamily, NvidiaGspFirmwareAuthority,
+        NvidiaGspFirmwareManifest,
     };
 
     #[test]
@@ -618,8 +616,8 @@ mod tests {
     #[test]
     fn drive_mailbox_without_ack_never_online_even_if_hardware_claimed() {
         let plat = SimPlatform::new();
-        // No auto_mailbox_ack — live observe must fail closed.
-        let payload = b"mailbox-live-fail-closed";
+        // No auto_mailbox_ack — live observation must not invent readiness.
+        let payload = b"mailbox-live-no-ready";
         let digest = sha256_bytes(payload);
         let manifest = NvidiaGspFirmwareManifest::new(
             FirmwareFamily::Tu10x,
@@ -633,7 +631,10 @@ mod tests {
         req.hardware = HardwareEvidence::full();
         req.drive_mailbox = true;
         let report = linux_bringup(&plat, &req);
-        assert!(!report.is_online(), "must not invent Online without mailbox ACK");
+        assert!(
+            !report.is_online(),
+            "must not invent Online without mailbox ACK"
+        );
         assert!(report.mailbox.is_some());
         assert!(!report.final_evidence.boot_mailbox_ok);
     }
@@ -709,7 +710,11 @@ mod tests {
         req.hardware = HardwareEvidence::full();
         req.retain_on_online = true;
         let outcome = run_bringup_ex(&plat, &req);
-        assert!(outcome.report.is_online(), "fault={:?}", outcome.report.fault);
+        assert!(
+            outcome.report.is_online(),
+            "fault={:?}",
+            outcome.report.fault
+        );
         assert!(outcome.report.resources_retained);
         assert!(outcome.retained.is_some());
         // Domain still live: second isolate still works (new domain).

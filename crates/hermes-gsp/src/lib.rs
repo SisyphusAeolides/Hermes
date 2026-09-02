@@ -30,21 +30,18 @@ pub use bringup::{
     BringupFault, BringupOutcome, BringupReport, BringupRequest, HardwareEvidence,
     RetainedResources,
 };
+pub use elf_gsp::{fwversion_bytes, parse_gsp_rm_elf, GspElfEvidence};
+pub use firmware::sha256_bytes;
+pub use firmware::{
+    firmware_family_for_device, firmware_version, FirmwareFamily, NvidiaGspFirmwareAuthority,
+    NvidiaGspFirmwareManifest, VerifiedFirmware, NVIDIA_GSP_RM_610_43_02, NVIDIA_GSP_RM_610_43_03,
+    NVIDIA_GSP_RM_610_57_04, NVIDIA_GSP_RM_DEFAULT_ALLOW_LIST,
+};
 pub use host_gate::{
     facts_from_sysfs, host_isolation_ready, host_may_claim_online, host_online_blockers,
     host_preflight_fault, host_preflight_fault_require_map, is_foreign_gpu_driver,
     is_hermes_or_nvidia_driver, HostDeviceFacts, HostGateBlocker,
 };
-pub use stage::{
-    stage_gsp_rm_image, stage_matches_admit, StageError, StageReport, STAGE_CHUNK_BYTES,
-};
-pub use elf_gsp::{fwversion_bytes, parse_gsp_rm_elf, GspElfEvidence};
-pub use firmware::{
-    firmware_family_for_device, firmware_version, FirmwareFamily, NvidiaGspFirmwareAuthority,
-    NvidiaGspFirmwareManifest, VerifiedFirmware, NVIDIA_GSP_RM_610_43_02, NVIDIA_GSP_RM_610_43_03,
-    NVIDIA_GSP_RM_DEFAULT_ALLOW_LIST,
-};
-pub use firmware::sha256_bytes;
 pub use layout::{
     chip_for_architecture, chip_gsp_relative, openrm_gsp_basename, openrm_gsp_relative,
     BootstrapArtifactKind, NvidiaChipDir, TURING_BOOTSTRAP_KINDS,
@@ -56,6 +53,9 @@ pub use mailbox::{
 pub use session::{
     default_negotiated_features, drive_full_success, plan_activation, ActivationPlan,
     ActivationStep,
+};
+pub use stage::{
+    stage_gsp_rm_image, stage_matches_admit, StageError, StageReport, STAGE_CHUNK_BYTES,
 };
 pub use wpr::{
     TuringFramebufferEvidence, TuringGspDmaInputs, TuringMmuLock, TuringRiscvBootOffsets,

@@ -54,12 +54,7 @@ impl PropertyStore {
         }
     }
 
-    pub fn create_prop(
-        &mut self,
-        name: &str,
-        prop_type: PropType,
-        values: Vec<u64>,
-    ) -> u32 {
+    pub fn create_prop(&mut self, name: &str, prop_type: PropType, values: Vec<u64>) -> u32 {
         let id = self.next_prop;
         self.next_prop = self.next_prop.wrapping_add(1).max(1);
         self.props.push(Property {

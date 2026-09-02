@@ -21,19 +21,11 @@ pub const HERMES_MOD_MODESET: u32 = 1 << 1;
 pub const HERMES_MOD_UVM: u32 = 1 << 2;
 pub const HERMES_MOD_DRM: u32 = 1 << 3;
 pub const HERMES_MOD_PEERMEM: u32 = 1 << 4;
-pub const HERMES_MOD_ALL_OPEN_STACK: u32 = HERMES_MOD_NVIDIA
-    | HERMES_MOD_MODESET
-    | HERMES_MOD_UVM
-    | HERMES_MOD_DRM
-    | HERMES_MOD_PEERMEM;
+pub const HERMES_MOD_ALL_OPEN_STACK: u32 =
+    HERMES_MOD_NVIDIA | HERMES_MOD_MODESET | HERMES_MOD_UVM | HERMES_MOD_DRM | HERMES_MOD_PEERMEM;
 
 /// Compose mask from companion presence (mirrors `hermes_ctl_module_mask_compose`).
-pub fn hermes_ctl_module_mask_compose(
-    modeset: bool,
-    uvm: bool,
-    drm: bool,
-    peermem: bool,
-) -> u32 {
+pub fn hermes_ctl_module_mask_compose(modeset: bool, uvm: bool, drm: bool, peermem: bool) -> u32 {
     let mut m = HERMES_MOD_NVIDIA;
     if modeset {
         m |= HERMES_MOD_MODESET;
@@ -170,10 +162,7 @@ impl HermesDrmEdid {
         if self.size < 128 {
             return false;
         }
-        self.data[..128]
-            .iter()
-            .fold(0u8, |a, b| a.wrapping_add(*b))
-            == 0
+        self.data[..128].iter().fold(0u8, |a, b| a.wrapping_add(*b)) == 0
     }
 }
 
@@ -294,11 +283,8 @@ mod tests {
         assert!(!st.is_online());
         assert_eq!(st.version, HERMES_CTL_STATUS_VERSION);
         assert_eq!(st.modules_listed(), &["nvidia"]);
-        let st2 = HermesCtlStatus::fill(
-            true,
-            5,
-            HERMES_MOD_NVIDIA | HERMES_MOD_DRM | HERMES_MOD_UVM,
-        );
+        let st2 =
+            HermesCtlStatus::fill(true, 5, HERMES_MOD_NVIDIA | HERMES_MOD_DRM | HERMES_MOD_UVM);
         assert!(st2.is_online());
         assert_eq!(st2.phase_label(), "ONLINE");
         assert_eq!(st2.modules_listed().len(), 3);

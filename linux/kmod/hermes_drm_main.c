@@ -2,8 +2,8 @@
 /*
  * Hermes DRM companion exported as module name "nvidia-drm".
  * Character device + ioctls gate on hermes_gsp_is_online() from nvidia.ko.
- * Full DRM subsystem registration is future work; this is the fail-closed
- * ioctl surface matching hermes-drm userspace logic.
+ * This module exposes the DRM ioctl surface matching hermes-drm userspace
+ * logic; registration and operations follow the live GSP session state.
  */
 
 #include <linux/module.h>
@@ -179,7 +179,7 @@ static int __init hermes_drm_init(void)
 		pr_err("hermes/nvidia-drm: misc_register failed: %d\n", err);
 		return err;
 	}
-	pr_info("hermes/nvidia-drm: /dev/nvidia-drm ready (gsp_online=%d, fail-closed)\n",
+	pr_info("hermes/nvidia-drm: /dev/nvidia-drm ready (gsp_online=%d)\n",
 		hermes_gsp_is_online());
 	return 0;
 }

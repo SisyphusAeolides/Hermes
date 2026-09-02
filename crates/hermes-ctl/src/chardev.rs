@@ -14,7 +14,7 @@ use hermes_linux::{
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read};
 use std::os::unix::io::AsRawFd;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug)]
 pub struct ModulePresence {
@@ -139,7 +139,8 @@ fn open_and_status_ctl() -> Result<(HermesCtlStatus, Option<String>), String> {
     if rc != 0 {
         // Fall back to read() status line if ioctl unavailable.
         let mut buf = String::new();
-        f.read_to_string(&mut buf).map_err(|e| format!("read: {e}"))?;
+        f.read_to_string(&mut buf)
+            .map_err(|e| format!("read: {e}"))?;
         let line = buf.lines().next().map(|s| s.to_string());
         let parsed = parse_ctl_read_line(line.as_deref().unwrap_or(""));
         return Ok((parsed, line));
@@ -170,7 +171,10 @@ fn open_and_status_drm() -> Result<HermesDrmStatus, String> {
         )
     };
     if rc != 0 {
-        return Err(format!("ioctl status failed errno={}", io::Error::last_os_error()));
+        return Err(format!(
+            "ioctl status failed errno={}",
+            io::Error::last_os_error()
+        ));
     }
     Ok(st)
 }
@@ -273,7 +277,11 @@ pub fn print_probe(p: &ChardevProbe) {
         (Some(st), _) => {
             println!(
                 "nvidia-drm ioctl: online={} connectors={} crtcs={} active={} ver={}",
-                st.gsp_online != 0, st.connectors, st.crtcs, st.active_crtcs, st.version
+                st.gsp_online != 0,
+                st.connectors,
+                st.crtcs,
+                st.active_crtcs,
+                st.version
             );
         }
         (None, Some(e)) => println!("nvidia-drm: {e}"),
@@ -285,7 +293,7 @@ pub fn print_probe(p: &ChardevProbe) {
 pub fn smoke() -> i32 {
     let p = probe();
     print_probe(&p);
-    // Fail-closed: if ctl says Online, phase must be ONLINE and we still only report.
+    // If ctl says Online, phase must be ONLINE; this command only reports.
     if let Some(st) = &p.ctl_status {
         if st.is_online() && st.phase != 5 {
             eprintln!("error: gsp_online set but phase != ONLINE (inconsistent uAPI)");
@@ -316,10 +324,7 @@ fn ioctl_status_path(path: &str, req: u64) -> Result<HermesCtlStatus, String> {
     let mut st = HermesCtlStatus::default();
     let rc = unsafe { libc_ioctl(f.as_raw_fd(), req, &mut st as *mut _ as *mut u8) };
     if rc != 0 {
-        return Err(format!(
-            "ioctl {path}: {}",
-            io::Error::last_os_error()
-        ));
+        return Err(format!("ioctl {path}: {}", io::Error::last_os_error()));
     }
     Ok(st)
 }
@@ -377,10 +382,7 @@ pub fn drm_get_edid(connector_id: u32) -> Result<HermesDrmEdid, String> {
         )
     };
     if rc != 0 {
-        return Err(format!(
-            "GET_EDID: {}",
-            io::Error::last_os_error()
-        ));
+        return Err(format!("GET_EDID: {}", io::Error::last_os_error()));
     }
     Ok(edid)
 }
@@ -400,10 +402,7 @@ pub fn drm_get_prop(object_id: u32, prop_id: u32) -> Result<HermesDrmPropGet, St
         )
     };
     if rc != 0 {
-        return Err(format!(
-            "GET_PROP: {}",
-            io::Error::last_os_error()
-        ));
+        return Err(format!("GET_PROP: {}", io::Error::last_os_error()));
     }
     Ok(prop)
 }
@@ -430,10 +429,7 @@ pub fn ctl_measure_fw(byte_length: u32, sha256: [u8; 32]) -> Result<HermesMeasur
         ));
     }
     if rc != 0 {
-        return Err(format!(
-            "MEASURE_FW: {}",
-            io::Error::last_os_error()
-        ));
+        return Err(format!("MEASURE_FW: {}", io::Error::last_os_error()));
     }
     Ok(m)
 }
@@ -448,29 +444,79 @@ pub fn ctl_apply_evidence(mut e: HermesApplyEvidence) -> Result<HermesApplyEvide
         )
     };
     if rc != 0 {
-        return Err(format!(
-            "APPLY_EVIDENCE: {}",
-            io::Error::last_os_error()
-        ));
+        return Err(format!("APPLY_EVIDENCE: {}", io::Error::last_os_error()));
     }
     Ok(e)
+}
+
+fn firmware_version_key(value: &str) -> (u32, u32, u32) {
+    let mut parts = value.split('.');
+    (
+        parts.next().and_then(|v| v.parse().ok()).unwrap_or(0),
+        parts.next().and_then(|v| v.parse().ok()).unwrap_or(0),
+        parts.next().and_then(|v| v.parse().ok()).unwrap_or(0),
+    )
+}
+
+/// Select a staged versioned OpenRM image for the live firmware probe.
+///
+/// The operator may pin an exact path with `HERMES_GSP_TU10X`; otherwise the
+/// newest version directory under `/lib/firmware/nvidia` is selected.  This
+/// keeps the probe aligned with the installed linux-firmware release instead
+/// of silently testing a stale development version.
+fn host_tu10x_firmware() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("HERMES_GSP_TU10X") {
+        let path = PathBuf::from(path);
+        return path.is_file().then_some(path);
+    }
+
+    let root = Path::new("/lib/firmware/nvidia");
+    let mut versions: Vec<String> = std::fs::read_dir(root)
+        .ok()?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let ty = entry.file_type().ok()?;
+            if !ty.is_dir() {
+                return None;
+            }
+            let name = entry.file_name().into_string().ok()?;
+            let mut components = name.split('.');
+            (components.clone().count() == 3
+                && components
+                    .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit())))
+            .then_some(name)
+        })
+        .collect();
+    versions.sort_by_key(|a| std::cmp::Reverse(firmware_version_key(a)));
+    versions.into_iter().find_map(|version| {
+        let path = root.join(version).join("gsp_tu10x.bin");
+        path.is_file().then_some(path)
+    })
 }
 
 /// Measure real host gsp_tu10x.bin and push pin to kmod; report phase (often FIRMWARED).
 pub fn silicon_fw_smoke() -> i32 {
     println!("=== silicon-fw-smoke: measure real GSP-RM + kmod MEASURE_FW ===");
-    let path = "/lib/firmware/nvidia/610.43.02/gsp_tu10x.bin";
-    let bytes = match std::fs::read(path) {
+    let path = match host_tu10x_firmware() {
+        Some(path) => path,
+        None => {
+            println!("skip: no versioned gsp_tu10x.bin under /lib/firmware/nvidia");
+            println!("PASS (skipped)");
+            return 0;
+        }
+    };
+    let bytes = match std::fs::read(&path) {
         Ok(b) => b,
         Err(e) => {
-            println!("skip: cannot read {path}: {e}");
+            println!("skip: cannot read {}: {e}", path.display());
             println!("PASS (skipped)");
             return 0;
         }
     };
     let digest = hermes_gsp::sha256_bytes(&bytes);
     println!(
-        "host measure: path={path} len={} sha256={:02x}{:02x}…",
+        "host measure: path={} len={} sha256={:02x}{:02x}…",
+        path.display(),
         bytes.len(),
         digest[0],
         digest[1]
@@ -502,7 +548,10 @@ pub fn silicon_fw_smoke() -> i32 {
     }
     // Phase should be at least FIRMWARED (2) after measured FW.
     if m.phase < 2 {
-        eprintln!("error: expected phase >= FIRMWARED after MEASURE_FW, got {}", m.phase);
+        eprintln!(
+            "error: expected phase >= FIRMWARED after MEASURE_FW, got {}",
+            m.phase
+        );
         return 1;
     }
     println!("firmware-measured phase progress (not Online): PASS");
@@ -578,25 +627,13 @@ fn companion_uvm_modeset_online_ops() -> Result<(), String> {
     // INITIALIZE: _IOW 0x21 size 8
     let init_req = ((1u64) << 30) | ((0x48u64) << 8) | 0x21 | (8u64 << 16);
     let mut init = [0u32; 2];
-    let rc = unsafe {
-        libc_ioctl(
-            f.as_raw_fd(),
-            init_req,
-            init.as_mut_ptr() as *mut u8,
-        )
-    };
+    let rc = unsafe { libc_ioctl(f.as_raw_fd(), init_req, init.as_mut_ptr() as *mut u8) };
     if rc != 0 {
         return Err(format!("UVM INITIALIZE: {}", io::Error::last_os_error()));
     }
     let page_req = ((2u64) << 30) | ((0x48u64) << 8) | 0x22 | (4u64 << 16);
     let mut pageable = 0u32;
-    let rc = unsafe {
-        libc_ioctl(
-            f.as_raw_fd(),
-            page_req,
-            &mut pageable as *mut _ as *mut u8,
-        )
-    };
+    let rc = unsafe { libc_ioctl(f.as_raw_fd(), page_req, &mut pageable as *mut _ as *mut u8) };
     if rc != 0 {
         return Err(format!("UVM PAGEABLE: {}", io::Error::last_os_error()));
     }
@@ -615,13 +652,7 @@ fn companion_uvm_modeset_online_ops() -> Result<(), String> {
         rm_ctrl_fd: 0,
         registered: 0,
     };
-    let rc = unsafe {
-        libc_ioctl(
-            f.as_raw_fd(),
-            reg_req,
-            &mut reg as *mut _ as *mut u8,
-        )
-    };
+    let rc = unsafe { libc_ioctl(f.as_raw_fd(), reg_req, &mut reg as *mut _ as *mut u8) };
     if rc != 0 {
         return Err(format!("UVM REGISTER_GPU: {}", io::Error::last_os_error()));
     }
@@ -636,13 +667,7 @@ fn companion_uvm_modeset_online_ops() -> Result<(), String> {
     // UNREGISTER_GPU: _IOW 0x24 size 4
     let unreg_req = ((1u64) << 30) | ((0x48u64) << 8) | 0x24 | (4u64 << 16);
     let mut gpu_id = 0u32;
-    let rc = unsafe {
-        libc_ioctl(
-            f.as_raw_fd(),
-            unreg_req,
-            &mut gpu_id as *mut _ as *mut u8,
-        )
-    };
+    let rc = unsafe { libc_ioctl(f.as_raw_fd(), unreg_req, &mut gpu_id as *mut _ as *mut u8) };
     if rc != 0 {
         return Err(format!(
             "UVM UNREGISTER_GPU: {}",
@@ -665,13 +690,7 @@ fn companion_uvm_modeset_online_ops() -> Result<(), String> {
         height: 1080,
         handle: 0,
     };
-    let rc = unsafe {
-        libc_ioctl(
-            mf.as_raw_fd(),
-            alloc_req,
-            &mut a as *mut _ as *mut u8,
-        )
-    };
+    let rc = unsafe { libc_ioctl(mf.as_raw_fd(), alloc_req, &mut a as *mut _ as *mut u8) };
     if rc != 0 {
         return Err(format!("MODESET ALLOC: {}", io::Error::last_os_error()));
     }
@@ -687,26 +706,14 @@ fn companion_uvm_modeset_online_ops() -> Result<(), String> {
         crtc_id: 1,
         sequence: 0,
     };
-    let rc = unsafe {
-        libc_ioctl(
-            mf.as_raw_fd(),
-            flip_req,
-            &mut fl as *mut _ as *mut u8,
-        )
-    };
+    let rc = unsafe { libc_ioctl(mf.as_raw_fd(), flip_req, &mut fl as *mut _ as *mut u8) };
     if rc != 0 {
         return Err(format!("MODESET FLIP: {}", io::Error::last_os_error()));
     }
     // FREE: _IOW 0x32 size 4
     let free_req = ((1u64) << 30) | ((0x48u64) << 8) | 0x32 | (4u64 << 16);
     let mut handle = a.handle;
-    let rc = unsafe {
-        libc_ioctl(
-            mf.as_raw_fd(),
-            free_req,
-            &mut handle as *mut _ as *mut u8,
-        )
-    };
+    let rc = unsafe { libc_ioctl(mf.as_raw_fd(), free_req, &mut handle as *mut _ as *mut u8) };
     if rc != 0 {
         return Err(format!("MODESET FREE: {}", io::Error::last_os_error()));
     }
@@ -730,13 +737,10 @@ pub fn kmod_load_smoke() -> i32 {
             .args(["-n", "chmod", "666", "/dev/nvidiactl", "/dev/nvidia0"])
             .status();
     } else {
-        let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../scripts/load-kmod.sh");
+        let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/load-kmod.sh");
         let script = script.canonicalize().unwrap_or(script);
         println!("running {}", script.display());
-        let st = std::process::Command::new("sh")
-            .arg(&script)
-            .status();
+        let st = std::process::Command::new("sh").arg(&script).status();
         match st {
             Ok(s) if s.success() => {}
             Ok(s) => {
@@ -782,7 +786,7 @@ pub fn kmod_load_smoke() -> i32 {
             if st.is_online() {
                 println!("note: Online reported (unexpected on bare load) — still phase-checked");
             } else {
-                println!("fail-closed Offline after bare load: PASS");
+                println!("evidence-gated Offline after bare load: PASS");
             }
             // Companion soft-deps must appear in module_mask when loaded.
             if (st.module_mask & hermes_linux::HERMES_MOD_NVIDIA) == 0 {
@@ -816,9 +820,7 @@ pub fn kmod_load_smoke() -> i32 {
 
 /// Expected ioctl mask from /sys/module (primary always set if we got here).
 fn companion_mask_from_sysfs() -> u32 {
-    use hermes_linux::{
-        hermes_ctl_module_mask_compose, HERMES_MOD_NVIDIA,
-    };
+    use hermes_linux::{hermes_ctl_module_mask_compose, HERMES_MOD_NVIDIA};
     let m = hermes_ctl_module_mask_compose(
         module_loaded("nvidia-modeset"),
         module_loaded("nvidia-uvm"),
@@ -835,7 +837,10 @@ pub fn kmod_online_smoke() -> i32 {
     println!("=== kmod-online-smoke: SIM_PROMOTE + EDID + companion Online (Turing+) ===");
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/load-kmod.sh");
     let script = script.canonicalize().unwrap_or(script);
-    println!("reloading kmods with HERMES_SIM_PROMOTE=1 via {}", script.display());
+    println!(
+        "reloading kmods with HERMES_SIM_PROMOTE=1 via {}",
+        script.display()
+    );
     let st = std::process::Command::new("sh")
         .arg(&script)
         .env("HERMES_SIM_PROMOTE", "1")
@@ -973,7 +978,7 @@ pub fn kmod_online_smoke() -> i32 {
         eprintln!("error: still Online after DEMOTE");
         return 1;
     }
-    // EDID must fail closed Offline.
+    // EDID must remain unavailable while the GSP session is Offline.
     match drm_get_edid(1) {
         Ok(_) => {
             eprintln!("error: GET_EDID must fail Offline");

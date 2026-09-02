@@ -1,5 +1,5 @@
 ! Live GPU handle lifecycle: fault/contain/release — no free Online skip.
-module hermes_fail_closed
+module hermes_lifecycle
   use hermes_kinds, only: i32, phase_offline, phase_online, phase_quarantined
   use hermes_resources, only: handle_t, handle_is_live
   implicit none
@@ -19,7 +19,7 @@ contains
 
   subroutine kill(h)
     type(handle_t), intent(inout) :: h
-    if (.not. handle_is_live(h)) error stop 'fail_closed: double-consume'
+    if (.not. handle_is_live(h)) error stop 'lifecycle: double-consume'
     h%live = .false.
     h%id = 0
   end subroutine kill
@@ -69,4 +69,4 @@ contains
     end if
   end function gpu_phase
 
-end module hermes_fail_closed
+end module hermes_lifecycle

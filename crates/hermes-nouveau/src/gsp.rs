@@ -1,4 +1,4 @@
-//! Nouveau-shaped GSP load plan + Hermes fail-closed session.
+//! Nouveau-shaped GSP load plan + Hermes evidence-driven session.
 //!
 //! Load order reverse-engineered from `tu102_gsp_load` / `gh100_gsp_load`:
 //! Booter path: gsp RM + bootloader + booter_load + booter_unload
@@ -7,9 +7,7 @@
 use alloc::vec::Vec;
 
 use hermes_core::{HermesManifold, HermesPhase, ManifoldFault};
-use hermes_gsp::{
-    BringupRequest, HardwareEvidence, NvidiaGspFirmwareAuthority, run_bringup,
-};
+use hermes_gsp::{run_bringup, BringupRequest, HardwareEvidence, NvidiaGspFirmwareAuthority};
 
 use crate::chip::{chip_hint_from_device_id, NouveauChip};
 use crate::firmware_manifest::{
@@ -61,7 +59,11 @@ pub fn plan_gsp_load(chip: NouveauChip, prefer_version: &str) -> Result<GspLoadP
     let entry = table
         .iter()
         .find(|e| e.chip == canon.as_str() && e.version == prefer_version)
-        .or_else(|| table.iter().find(|e| e.chip == chip.as_str() && e.version == prefer_version))
+        .or_else(|| {
+            table
+                .iter()
+                .find(|e| e.chip == chip.as_str() && e.version == prefer_version)
+        })
         .or_else(|| table.iter().find(|e| e.chip == canon.as_str()))
         .or_else(|| table.iter().find(|e| e.chip == chip.as_str()))
         .ok_or(NvkmError::UnsupportedChip)?;
@@ -151,8 +153,7 @@ impl GspSession {
         hardware: HardwareEvidence,
         platform: &impl hermes_core::HermesPlatform,
     ) -> Result<(), ManifoldFault> {
-        let mut req =
-            BringupRequest::with_defaults(self.device.identity, gsp_rm_image, authority);
+        let mut req = BringupRequest::with_defaults(self.device.identity, gsp_rm_image, authority);
         req.hardware = hardware;
         let report = run_bringup(platform, &req);
         self.manifold = report.manifold;
@@ -184,10 +185,8 @@ impl GspSession {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hermes_core::{NVIDIA_VENDOR_ID, pci_identity};
-    use hermes_gsp::{
-        FirmwareFamily, NvidiaGspFirmwareManifest, firmware_version, sha256_bytes,
-    };
+    use hermes_core::{pci_identity, NVIDIA_VENDOR_ID};
+    use hermes_gsp::{firmware_version, sha256_bytes, FirmwareFamily, NvidiaGspFirmwareManifest};
     use hermes_linux::SimPlatform;
 
     #[test]

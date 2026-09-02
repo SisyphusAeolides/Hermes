@@ -155,8 +155,14 @@ mod tests {
         assert_eq!(NvidiaChipDir::Tu117.gsp_canonical(), NvidiaChipDir::Tu116);
         assert_eq!(NvidiaChipDir::Tu104.gsp_canonical(), NvidiaChipDir::Tu102);
         assert_eq!(NvidiaChipDir::Ga107.gsp_canonical(), NvidiaChipDir::Ga102);
-        assert_eq!(NvidiaChipDir::Ga100.firmware_family(), FirmwareFamily::Tu10x);
-        assert_eq!(NvidiaChipDir::Ad102.firmware_family(), FirmwareFamily::Ga10x);
+        assert_eq!(
+            NvidiaChipDir::Ga100.firmware_family(),
+            FirmwareFamily::Tu10x
+        );
+        assert_eq!(
+            NvidiaChipDir::Ad102.firmware_family(),
+            FirmwareFamily::Ga10x
+        );
         assert_eq!(
             chip_for_architecture(NvidiaArchitecture::Blackwell),
             NvidiaChipDir::Gb202

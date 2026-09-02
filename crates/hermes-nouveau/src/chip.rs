@@ -1,7 +1,7 @@
 //! Nouveau chip identity mapped onto Hermes architecture families.
 
-use hermes_core::{NvidiaArchitecture, nvidia_architecture};
-use hermes_gsp::{FirmwareFamily, firmware_family_for_device};
+use hermes_core::{nvidia_architecture, NvidiaArchitecture};
+use hermes_gsp::{firmware_family_for_device, FirmwareFamily};
 
 /// Chip directory names used by Nouveau `NVKM_GSP_FIRMWARE_*` macros.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -184,9 +184,6 @@ mod tests {
         assert_eq!(NouveauChip::Ad107.firmware_canonical(), NouveauChip::Ad102);
         assert!(NouveauChip::Gb202.uses_fmc());
         assert!(!NouveauChip::Tu102.uses_fmc());
-        assert_eq!(
-            chip_hint_from_device_id(0x1fb9),
-            Some(NouveauChip::Tu102)
-        );
+        assert_eq!(chip_hint_from_device_id(0x1fb9), Some(NouveauChip::Tu102));
     }
 }

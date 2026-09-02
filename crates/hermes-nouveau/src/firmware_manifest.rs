@@ -23,50 +23,210 @@ pub struct NouveauFirmwareNeed {
 
 /// Every `NVKM_GSP_FIRMWARE_BOOTER(chip, vers)` declaration.
 pub const NOUVEAU_BOOTER_FIRMWARE: &[NouveauFirmwareNeed] = &[
-    NouveauFirmwareNeed { chip: "ad102", version: "535.113.01", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "ad102", version: "570.144", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "ad103", version: "535.113.01", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "ad103", version: "570.144", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "ad104", version: "535.113.01", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "ad104", version: "570.144", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "ad106", version: "535.113.01", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "ad106", version: "570.144", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "ad107", version: "535.113.01", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "ad107", version: "570.144", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "ga100", version: "535.113.01", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "ga100", version: "570.144", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "ga102", version: "535.113.01", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "ga102", version: "570.144", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "ga103", version: "535.113.01", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "ga103", version: "570.144", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "ga104", version: "535.113.01", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "ga104", version: "570.144", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "ga106", version: "535.113.01", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "ga106", version: "570.144", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "ga107", version: "535.113.01", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "ga107", version: "570.144", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "tu102", version: "535.113.01", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "tu102", version: "570.144", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "tu104", version: "535.113.01", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "tu104", version: "570.144", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "tu106", version: "535.113.01", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "tu106", version: "570.144", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "tu116", version: "535.113.01", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "tu116", version: "570.144", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "tu117", version: "535.113.01", style: NouveauFirmwareStyle::Booter },
-    NouveauFirmwareNeed { chip: "tu117", version: "570.144", style: NouveauFirmwareStyle::Booter },
+    NouveauFirmwareNeed {
+        chip: "ad102",
+        version: "535.113.01",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "ad102",
+        version: "570.144",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "ad103",
+        version: "535.113.01",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "ad103",
+        version: "570.144",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "ad104",
+        version: "535.113.01",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "ad104",
+        version: "570.144",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "ad106",
+        version: "535.113.01",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "ad106",
+        version: "570.144",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "ad107",
+        version: "535.113.01",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "ad107",
+        version: "570.144",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "ga100",
+        version: "535.113.01",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "ga100",
+        version: "570.144",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "ga102",
+        version: "535.113.01",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "ga102",
+        version: "570.144",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "ga103",
+        version: "535.113.01",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "ga103",
+        version: "570.144",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "ga104",
+        version: "535.113.01",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "ga104",
+        version: "570.144",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "ga106",
+        version: "535.113.01",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "ga106",
+        version: "570.144",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "ga107",
+        version: "535.113.01",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "ga107",
+        version: "570.144",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "tu102",
+        version: "535.113.01",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "tu102",
+        version: "570.144",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "tu104",
+        version: "535.113.01",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "tu104",
+        version: "570.144",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "tu106",
+        version: "535.113.01",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "tu106",
+        version: "570.144",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "tu116",
+        version: "535.113.01",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "tu116",
+        version: "570.144",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "tu117",
+        version: "535.113.01",
+        style: NouveauFirmwareStyle::Booter,
+    },
+    NouveauFirmwareNeed {
+        chip: "tu117",
+        version: "570.144",
+        style: NouveauFirmwareStyle::Booter,
+    },
 ];
 
 /// Every `NVKM_GSP_FIRMWARE_FMC(chip, vers)` declaration.
 pub const NOUVEAU_FMC_FIRMWARE: &[NouveauFirmwareNeed] = &[
-    NouveauFirmwareNeed { chip: "gb100", version: "570.144", style: NouveauFirmwareStyle::Fmc },
-    NouveauFirmwareNeed { chip: "gb102", version: "570.144", style: NouveauFirmwareStyle::Fmc },
-    NouveauFirmwareNeed { chip: "gb202", version: "570.144", style: NouveauFirmwareStyle::Fmc },
-    NouveauFirmwareNeed { chip: "gb203", version: "570.144", style: NouveauFirmwareStyle::Fmc },
-    NouveauFirmwareNeed { chip: "gb205", version: "570.144", style: NouveauFirmwareStyle::Fmc },
-    NouveauFirmwareNeed { chip: "gb206", version: "570.144", style: NouveauFirmwareStyle::Fmc },
-    NouveauFirmwareNeed { chip: "gb207", version: "570.144", style: NouveauFirmwareStyle::Fmc },
-    NouveauFirmwareNeed { chip: "gh100", version: "570.144", style: NouveauFirmwareStyle::Fmc },
+    NouveauFirmwareNeed {
+        chip: "gb100",
+        version: "570.144",
+        style: NouveauFirmwareStyle::Fmc,
+    },
+    NouveauFirmwareNeed {
+        chip: "gb102",
+        version: "570.144",
+        style: NouveauFirmwareStyle::Fmc,
+    },
+    NouveauFirmwareNeed {
+        chip: "gb202",
+        version: "570.144",
+        style: NouveauFirmwareStyle::Fmc,
+    },
+    NouveauFirmwareNeed {
+        chip: "gb203",
+        version: "570.144",
+        style: NouveauFirmwareStyle::Fmc,
+    },
+    NouveauFirmwareNeed {
+        chip: "gb205",
+        version: "570.144",
+        style: NouveauFirmwareStyle::Fmc,
+    },
+    NouveauFirmwareNeed {
+        chip: "gb206",
+        version: "570.144",
+        style: NouveauFirmwareStyle::Fmc,
+    },
+    NouveauFirmwareNeed {
+        chip: "gb207",
+        version: "570.144",
+        style: NouveauFirmwareStyle::Fmc,
+    },
+    NouveauFirmwareNeed {
+        chip: "gh100",
+        version: "570.144",
+        style: NouveauFirmwareStyle::Fmc,
+    },
 ];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -80,19 +240,97 @@ pub struct NouveauFwifEntry {
 
 /// Parsed `nvkm_gsp_fwif` table rows (priority, load, RM version).
 pub const NOUVEAU_GSP_FWIF: &[NouveauFwifEntry] = &[
-    NouveauFwifEntry { chip_file: "ad102", priority: 1, load_fn: "tu102_gsp_load", version: "570.144", rm_impl: "r570_rm_ga102" },
-    NouveauFwifEntry { chip_file: "ad102", priority: 0, load_fn: "tu102_gsp_load", version: "535.113.01", rm_impl: "r535_rm_ga102" },
-    NouveauFwifEntry { chip_file: "ga100", priority: 1, load_fn: "tu102_gsp_load", version: "570.144", rm_impl: "r570_rm_tu102" },
-    NouveauFwifEntry { chip_file: "ga100", priority: 0, load_fn: "tu102_gsp_load", version: "535.113.01", rm_impl: "r535_rm_tu102" },
-    NouveauFwifEntry { chip_file: "ga102", priority: 1, load_fn: "tu102_gsp_load", version: "570.144", rm_impl: "r570_rm_ga102" },
-    NouveauFwifEntry { chip_file: "ga102", priority: 0, load_fn: "tu102_gsp_load", version: "535.113.01", rm_impl: "r535_rm_ga102" },
-    NouveauFwifEntry { chip_file: "gb100", priority: 0, load_fn: "gh100_gsp_load", version: "570.144", rm_impl: "r570_rm_gb10x" },
-    NouveauFwifEntry { chip_file: "gb202", priority: 0, load_fn: "gh100_gsp_load", version: "570.144", rm_impl: "r570_rm_gb20x" },
-    NouveauFwifEntry { chip_file: "gh100", priority: 0, load_fn: "gh100_gsp_load", version: "570.144", rm_impl: "r570_rm_gh100" },
-    NouveauFwifEntry { chip_file: "tu102", priority: 1, load_fn: "tu102_gsp_load", version: "570.144", rm_impl: "r570_rm_tu102" },
-    NouveauFwifEntry { chip_file: "tu102", priority: 0, load_fn: "tu102_gsp_load", version: "535.113.01", rm_impl: "r535_rm_tu102" },
-    NouveauFwifEntry { chip_file: "tu116", priority: 1, load_fn: "tu102_gsp_load", version: "570.144", rm_impl: "r570_rm_tu102" },
-    NouveauFwifEntry { chip_file: "tu116", priority: 0, load_fn: "tu102_gsp_load", version: "535.113.01", rm_impl: "r535_rm_tu102" },
+    NouveauFwifEntry {
+        chip_file: "ad102",
+        priority: 1,
+        load_fn: "tu102_gsp_load",
+        version: "570.144",
+        rm_impl: "r570_rm_ga102",
+    },
+    NouveauFwifEntry {
+        chip_file: "ad102",
+        priority: 0,
+        load_fn: "tu102_gsp_load",
+        version: "535.113.01",
+        rm_impl: "r535_rm_ga102",
+    },
+    NouveauFwifEntry {
+        chip_file: "ga100",
+        priority: 1,
+        load_fn: "tu102_gsp_load",
+        version: "570.144",
+        rm_impl: "r570_rm_tu102",
+    },
+    NouveauFwifEntry {
+        chip_file: "ga100",
+        priority: 0,
+        load_fn: "tu102_gsp_load",
+        version: "535.113.01",
+        rm_impl: "r535_rm_tu102",
+    },
+    NouveauFwifEntry {
+        chip_file: "ga102",
+        priority: 1,
+        load_fn: "tu102_gsp_load",
+        version: "570.144",
+        rm_impl: "r570_rm_ga102",
+    },
+    NouveauFwifEntry {
+        chip_file: "ga102",
+        priority: 0,
+        load_fn: "tu102_gsp_load",
+        version: "535.113.01",
+        rm_impl: "r535_rm_ga102",
+    },
+    NouveauFwifEntry {
+        chip_file: "gb100",
+        priority: 0,
+        load_fn: "gh100_gsp_load",
+        version: "570.144",
+        rm_impl: "r570_rm_gb10x",
+    },
+    NouveauFwifEntry {
+        chip_file: "gb202",
+        priority: 0,
+        load_fn: "gh100_gsp_load",
+        version: "570.144",
+        rm_impl: "r570_rm_gb20x",
+    },
+    NouveauFwifEntry {
+        chip_file: "gh100",
+        priority: 0,
+        load_fn: "gh100_gsp_load",
+        version: "570.144",
+        rm_impl: "r570_rm_gh100",
+    },
+    NouveauFwifEntry {
+        chip_file: "tu102",
+        priority: 1,
+        load_fn: "tu102_gsp_load",
+        version: "570.144",
+        rm_impl: "r570_rm_tu102",
+    },
+    NouveauFwifEntry {
+        chip_file: "tu102",
+        priority: 0,
+        load_fn: "tu102_gsp_load",
+        version: "535.113.01",
+        rm_impl: "r535_rm_tu102",
+    },
+    NouveauFwifEntry {
+        chip_file: "tu116",
+        priority: 1,
+        load_fn: "tu102_gsp_load",
+        version: "570.144",
+        rm_impl: "r570_rm_tu102",
+    },
+    NouveauFwifEntry {
+        chip_file: "tu116",
+        priority: 0,
+        load_fn: "tu102_gsp_load",
+        version: "535.113.01",
+        rm_impl: "r535_rm_tu102",
+    },
 ];
 
 /// ELF `.fwsignature_*` section preferred by chip file.
@@ -136,6 +374,8 @@ mod tests {
         assert!(!NOUVEAU_BOOTER_FIRMWARE.is_empty());
         assert!(!NOUVEAU_GSP_FWIF.is_empty());
         assert!(NOUVEAU_BOOTER_FIRMWARE.iter().any(|e| e.chip == "tu102"));
-        assert!(NOUVEAU_FMC_FIRMWARE.iter().any(|e| e.chip.starts_with("gb")));
+        assert!(NOUVEAU_FMC_FIRMWARE
+            .iter()
+            .any(|e| e.chip.starts_with("gb")));
     }
 }

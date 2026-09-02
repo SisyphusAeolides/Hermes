@@ -94,22 +94,43 @@ mod tests {
         assert!(!is_nvidia_turing_or_newer(0x13c0)); // GM204
 
         // Turing
-        assert_eq!(nvidia_architecture(0x1e04), Some(NvidiaArchitecture::Turing)); // TU102
-        assert_eq!(nvidia_architecture(0x1fb9), Some(NvidiaArchitecture::Turing)); // TU117GLM T1000
-        assert_eq!(nvidia_architecture(0x2182), Some(NvidiaArchitecture::Turing)); // TU116
+        assert_eq!(
+            nvidia_architecture(0x1e04),
+            Some(NvidiaArchitecture::Turing)
+        ); // TU102
+        assert_eq!(
+            nvidia_architecture(0x1fb9),
+            Some(NvidiaArchitecture::Turing)
+        ); // TU117GLM T1000
+        assert_eq!(
+            nvidia_architecture(0x2182),
+            Some(NvidiaArchitecture::Turing)
+        ); // TU116
 
         // Ampere
-        assert_eq!(nvidia_architecture(0x2204), Some(NvidiaArchitecture::Ampere)); // GA102
-        assert_eq!(nvidia_architecture(0x2484), Some(NvidiaArchitecture::Ampere));
+        assert_eq!(
+            nvidia_architecture(0x2204),
+            Some(NvidiaArchitecture::Ampere)
+        ); // GA102
+        assert_eq!(
+            nvidia_architecture(0x2484),
+            Some(NvidiaArchitecture::Ampere)
+        );
 
         // Hopper
-        assert_eq!(nvidia_architecture(0x2330), Some(NvidiaArchitecture::Hopper));
+        assert_eq!(
+            nvidia_architecture(0x2330),
+            Some(NvidiaArchitecture::Hopper)
+        );
 
         // Ada
         assert_eq!(nvidia_architecture(0x2684), Some(NvidiaArchitecture::Ada)); // AD102
 
         // Blackwell
-        assert_eq!(nvidia_architecture(0x2b85), Some(NvidiaArchitecture::Blackwell));
+        assert_eq!(
+            nvidia_architecture(0x2b85),
+            Some(NvidiaArchitecture::Blackwell)
+        );
 
         // Unknown future / non-GPU
         assert!(!is_nvidia_turing_or_newer(0x4000));

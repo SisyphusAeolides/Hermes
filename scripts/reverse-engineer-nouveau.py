@@ -6,7 +6,7 @@ Outputs (under --out, default: generated/nouveau-re/):
   - inventory.json          full file/subsystem inventory
   - firmware_manifest.rs    MODULE_FIRMWARE / fwif tables as Rust
   - chip_map.rs             chip → load path → RM version
-  - superiority.md          Hermes vs Nouveau fail-closed comparison
+  - superiority.md          Hermes vs Nouveau evidence comparison
   - formal/NvkmGsp.idr      Idris total phase model
   - formal/NvkmGsp.agda     Agda safe engine lattice
   - formal/NvkmGsp.f90      Fortran exclusive-handle stub (see formal/fortran/)
@@ -359,7 +359,7 @@ Source inventory: **{inv['file_count']}** files, **{inv['total_lines']}** lines 
 
 | Area | Nouveau | Hermes |
 |---|---|---|
-| Missing firmware | Often probe error (`gsp ctor failed`) after partial bind | **Fail-closed admission** before Online; no invented GPU |
+| Missing firmware | Often probe error (`gsp ctor failed`) after partial bind | **Evidence-gated admission** before Online; no invented GPU |
 | Firmware identity | Path/version load | Path + **SHA-256 pin** + **ELF structure** (`.fwimage`/`.fwversion`) |
 | Online publication | Running flag after RM path | **Manifold certificate** (IOMMU+WPR+mailbox+ready+features) |
 | Languages | C | Rust + Fortran + Idris + Agda |

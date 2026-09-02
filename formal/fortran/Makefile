@@ -9,7 +9,7 @@ MODULES := \
 	hermes_kinds.f90 \
 	hermes_resources.f90 \
 	hermes_rings.f90 \
-	hermes_fail_closed.f90 \
+	hermes_lifecycle.f90 \
 	hermes_wpr.f90 \
 	hermes_bootstrap.f90 \
 	hermes_firmware.f90 \
@@ -35,7 +35,7 @@ $(BUILD)/%.o: %.f90 | $(BUILD)
 # Module dependency order (manual DAG).
 $(BUILD)/hermes_resources.o: $(BUILD)/hermes_kinds.o
 $(BUILD)/hermes_rings.o: $(BUILD)/hermes_resources.o
-$(BUILD)/hermes_fail_closed.o: $(BUILD)/hermes_resources.o
+$(BUILD)/hermes_lifecycle.o: $(BUILD)/hermes_resources.o
 $(BUILD)/hermes_wpr.o: $(BUILD)/hermes_resources.o
 $(BUILD)/hermes_bootstrap.o: $(BUILD)/hermes_resources.o
 $(BUILD)/hermes_firmware.o: $(BUILD)/hermes_resources.o

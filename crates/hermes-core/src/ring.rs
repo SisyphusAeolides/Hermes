@@ -29,32 +29,40 @@ impl<P: HermesPlatform> ZeroCopyRing<P> {
         loop {
             let current_tail = self.tail.load(Ordering::Acquire);
             let current_head = self.head.load(Ordering::Relaxed);
-            
+
             // If ring is not full
             if current_tail.wrapping_sub(current_head) < self.capacity {
                 // Try to claim the slot
-                if self.tail.compare_exchange_weak(
-                    current_tail,
-                    current_tail.wrapping_add(1),
-                    Ordering::AcqRel,
-                    Ordering::Relaxed,
-                ).is_ok() {
+                if self
+                    .tail
+                    .compare_exchange_weak(
+                        current_tail,
+                        current_tail.wrapping_add(1),
+                        Ordering::AcqRel,
+                        Ordering::Relaxed,
+                    )
+                    .is_ok()
+                {
                     return current_tail % self.capacity;
                 }
             }
 
             // Phase lock avoidance: chaotic relax
             platform.chaos_relax(scheduler, dt);
-            
+
             // Advance time-step to evolve chaotic system further into unpredictable regimes
             dt += 0.01;
-            if dt > 1.0 { dt = 0.01; }
+            if dt > 1.0 {
+                dt = 0.01;
+            }
         }
     }
 
     /// Fast release bypassing atomic sequencing rules when strictly ordered.
     pub fn release_fast(&self) {
-        let h = self.head.load(Ordering::Relaxed);
-        self.head.store(h.wrapping_add(1), Ordering::Release);
+        // A fetch-add is required here: a load/store pair can lose a release
+        // when two producers retire slots concurrently.  The release ordering
+        // publishes all writes made before the slot became available again.
+        self.head.fetch_add(1, Ordering::Release);
     }
 }

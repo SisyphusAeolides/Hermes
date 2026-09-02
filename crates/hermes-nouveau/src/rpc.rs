@@ -68,11 +68,7 @@ impl fmt::Display for RpcError {
 }
 
 /// Validate a reply against the request under the selected policy.
-pub fn validate_reply(
-    request: &RpcHeader,
-    reply_fn: u32,
-    reply_seq: u32,
-) -> Result<(), RpcError> {
+pub fn validate_reply(request: &RpcHeader, reply_fn: u32, reply_seq: u32) -> Result<(), RpcError> {
     if !request.policy.waits() {
         return Ok(());
     }

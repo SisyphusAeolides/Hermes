@@ -1,4 +1,4 @@
-//! Live host silicon probe — fail-closed, never invents Online.
+//! Live host silicon probe — evidence-driven and never invents Online.
 //!
 //! Scans sysfs PCI for NVIDIA Turing+, admits staged GSP-RM from linux-firmware,
 //! reports BAR/IOMMU/driver binding. MMIO map requires elevated privileges and
@@ -12,9 +12,9 @@ use hermes_core::{
     NVIDIA_VENDOR_ID,
 };
 use hermes_gsp::{
-    chip_gsp_relative, facts_from_sysfs, firmware_family_for_device, host_may_claim_online,
-    host_online_blockers, openrm_gsp_relative, parse_gsp_rm_elf, sha256_bytes, FirmwareFamily,
-    HostDeviceFacts, NvidiaChipDir, NvidiaGspFirmwareAuthority, fwversion_bytes,
+    chip_gsp_relative, facts_from_sysfs, firmware_family_for_device, fwversion_bytes,
+    host_may_claim_online, host_online_blockers, openrm_gsp_relative, parse_gsp_rm_elf,
+    sha256_bytes, FirmwareFamily, HostDeviceFacts, NvidiaChipDir, NvidiaGspFirmwareAuthority,
 };
 
 #[derive(Clone, Debug)]
@@ -92,10 +92,7 @@ fn parse_resource0(path: &Path) -> Option<(u64, u64)> {
 
 fn iommu_group_id(dev: &Path) -> Option<u32> {
     let link = fs::read_link(dev.join("iommu_group")).ok()?;
-    link.file_name()?
-        .to_str()?
-        .parse()
-        .ok()
+    link.file_name()?.to_str()?.parse().ok()
 }
 
 fn driver_name(dev: &Path) -> Option<String> {
@@ -357,7 +354,7 @@ pub fn probe_host(firmware_root: &Path) -> SiliconReport {
 /// Host-bar smoke: for each GPU, attempt BAR0 and print shared gate verdict.
 pub fn host_bar_smoke() {
     let gpus = scan_nvidia_gpus(Path::new("/sys/bus/pci/devices"));
-    println!("Hermes host-bar smoke (real resource0 open; fail-closed)");
+    println!("Hermes host-bar smoke (real resource0 open; evidence-driven)");
     if gpus.is_empty() {
         println!("no NVIDIA display GPUs");
         println!("PASS");
@@ -379,10 +376,7 @@ pub fn host_bar_smoke() {
             may
         );
         if !attempt.ok {
-            println!(
-                "    bar error: {}",
-                attempt.error.as_deref().unwrap_or("?")
-            );
+            println!("    bar error: {}", attempt.error.as_deref().unwrap_or("?"));
         }
         for b in host_online_blockers(&facts) {
             println!("    blocker: {}", b.as_str());
@@ -397,7 +391,7 @@ pub fn host_bar_smoke() {
 }
 
 pub fn print_report(r: &SiliconReport) {
-    println!("Hermes silicon probe (fail-closed; Online never invented)");
+    println!("Hermes silicon probe (evidence-driven; Online never invented)");
     println!("GPUs found: {}", r.gpus.len());
     for g in &r.gpus {
         let arch = nvidia_architecture(g.device)

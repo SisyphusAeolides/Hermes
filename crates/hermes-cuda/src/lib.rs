@@ -14,6 +14,7 @@ use std::sync::Mutex;
 use std::vec::Vec;
 
 use hermes_cccl::{hermes_fill, hermes_sort, CCCL_VERSION};
+use hermes_core::chaos::{ChaosScheduler, ChaosSnapshot};
 // hermes_copy/reduce used in tests via super::*
 
 /// CUDA API result codes (subset of cudaError_t / CUresult).
@@ -127,6 +128,10 @@ struct CudaState {
     peer_enabled: Vec<(u32, u32)>,
     /// Software IPC exports (key → buffer).
     ipc_exports: Vec<IpcExport>,
+    /// Shared nonlinear scheduler state for CUDA submission turns.  It only
+    /// determines host-side service quanta; it never grants device authority.
+    chaos: ChaosScheduler,
+    chaos_service_quantum_us: u32,
 }
 
 static STATE: Mutex<CudaState> = Mutex::new(CudaState {
@@ -144,6 +149,8 @@ static STATE: Mutex<CudaState> = Mutex::new(CudaState {
     events: Vec::new(),
     peer_enabled: Vec::new(),
     ipc_exports: Vec::new(),
+    chaos: ChaosScheduler::new(),
+    chaos_service_quantum_us: 1,
 });
 
 fn with_state<F, R>(f: F) -> R
@@ -151,7 +158,18 @@ where
     F: FnOnce(&mut CudaState) -> R,
 {
     let mut g = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    g.chaos_service_quantum_us = g.chaos.next_interval(0.01);
     f(&mut g)
+}
+
+/// Return the latest chaos telemetry for diagnostics and qualification.
+pub fn hermes_cuda_chaos_snapshot() -> ChaosSnapshot {
+    with_state(|s| s.chaos.snapshot())
+}
+
+/// Return the host-side service quantum selected for the latest CUDA turn.
+pub fn hermes_cuda_chaos_service_quantum_us() -> u32 {
+    with_state(|s| s.chaos_service_quantum_us)
 }
 
 fn require_gsp(s: &CudaState) -> CudaResult {
@@ -184,6 +202,8 @@ pub fn hermes_cuda_set_gsp_online(online: bool) {
             s.peer_enabled.clear();
             s.ipc_exports.clear();
             s.driver_init = false;
+            s.chaos = ChaosScheduler::new();
+            s.chaos_service_quantum_us = 1;
         }
     });
 }
@@ -244,6 +264,8 @@ pub fn hermes_cuda_reset() {
         s.peer_enabled.clear();
         s.ipc_exports.clear();
         s.next_handle = 1;
+        s.chaos = ChaosScheduler::new();
+        s.chaos_service_quantum_us = 1;
     });
 }
 
@@ -750,11 +772,7 @@ pub const CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES: i32 
 pub const CU_DEVICE_ATTRIBUTE_DIRECT_MANAGED_MEM_ACCESS_FROM_HOST: i32 = 100;
 
 #[no_mangle]
-pub extern "C" fn cuDeviceGetAttribute(
-    pi: *mut i32,
-    attrib: i32,
-    device: i32,
-) -> CudaResult {
+pub extern "C" fn cuDeviceGetAttribute(pi: *mut i32, attrib: i32, device: i32) -> CudaResult {
     if pi.is_null() {
         return CUDA_ERROR_INVALID_VALUE;
     }
@@ -1134,7 +1152,7 @@ fn ipc_handle_from_key(key: u64) -> CUipcMemHandle {
     let mut h = CUipcMemHandle::default();
     let b = key.to_le_bytes();
     h.reserved[..8].copy_from_slice(&b);
-    // Magic tag so random handles fail closed.
+    // Magic tag so random handles are rejected.
     h.reserved[8..12].copy_from_slice(b"HRMS");
     h
 }
@@ -1217,11 +1235,7 @@ pub extern "C" fn cuIpcCloseMemHandle(dptr: u64) -> CudaResult {
 }
 
 #[no_mangle]
-pub extern "C" fn cuPointerGetAttribute(
-    data: *mut u8,
-    attribute: u32,
-    ptr: u64,
-) -> CudaResult {
+pub extern "C" fn cuPointerGetAttribute(data: *mut u8, attribute: u32, ptr: u64) -> CudaResult {
     if data.is_null() || ptr == 0 {
         return CUDA_ERROR_INVALID_VALUE;
     }
@@ -1242,11 +1256,7 @@ pub extern "C" fn cuPointerGetAttribute(
                 // MEMORY_TYPE device
                 let v: u32 = 2;
                 unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        &v as *const u32 as *const u8,
-                        data,
-                        4,
-                    );
+                    core::ptr::copy_nonoverlapping(&v as *const u32 as *const u8, data, 4);
                 }
                 CUDA_SUCCESS
             }
@@ -1258,22 +1268,14 @@ pub extern "C" fn cuPointerGetAttribute(
                     .map(|c| c.device as i32)
                     .unwrap_or(0);
                 unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        &device as *const i32 as *const u8,
-                        data,
-                        4,
-                    );
+                    core::ptr::copy_nonoverlapping(&device as *const i32 as *const u8, data, 4);
                 }
                 CUDA_SUCCESS
             }
             14 => {
                 let id = buf.id;
                 unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        &id as *const u64 as *const u8,
-                        data,
-                        8,
-                    );
+                    core::ptr::copy_nonoverlapping(&id as *const u64 as *const u8, data, 8);
                 }
                 CUDA_SUCCESS
             }
@@ -1518,7 +1520,7 @@ pub extern "C" fn cuMemcpyDtoDAsync_v2(
     cuMemcpyDtoD_v2(dst, src, bytes)
 }
 
-/// Load module with explicit image size (fatbin / cubin / PTX / stub).
+/// Load a CUDA module image through the classic pointer-based entry point.
 #[no_mangle]
 pub extern "C" fn cuModuleLoadDataEx(
     module: *mut u64,
@@ -1551,14 +1553,13 @@ pub fn hermes_cuda_module_load_sized(image: &[u8]) -> Result<u64, CudaResult> {
             ModuleImageKind::Fatbin => "fatbin",
             ModuleImageKind::CubinElf => "cubin",
             ModuleImageKind::PtxText => "ptx",
-            ModuleImageKind::HermesStub => "stub",
             ModuleImageKind::Unknown => "unknown",
         };
         s.modules.push(Module {
             id,
             ctx,
             name: name.into(),
-            functions: vec!["hermes_kernel".into(), "main".into()],
+            functions: module_functions(kind, image),
         });
         Ok(id)
     })
@@ -1567,8 +1568,6 @@ pub fn hermes_cuda_module_load_sized(image: &[u8]) -> Result<u64, CudaResult> {
 /// Classify a module image without executing it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ModuleImageKind {
-    /// Hermes test image (empty or non-magic) — allowed for software launch shell.
-    HermesStub,
     /// CUDA fatbinary magic `0xBA55ED50` (little-endian first u32).
     Fatbin,
     /// ELF cubin (`\x7fELF`).
@@ -1580,7 +1579,7 @@ pub enum ModuleImageKind {
 
 pub fn classify_module_image(image: &[u8]) -> ModuleImageKind {
     if image.is_empty() {
-        return ModuleImageKind::HermesStub;
+        return ModuleImageKind::Unknown;
     }
     if image.len() >= 4 {
         let mag = u32::from_le_bytes([image[0], image[1], image[2], image[3]]);
@@ -1595,11 +1594,54 @@ pub fn classify_module_image(image: &[u8]) -> ModuleImageKind {
     if head.contains(".version") || head.trim_start().starts_with("//") {
         return ModuleImageKind::PtxText;
     }
-    // Single NUL used by unit tests as stub.
-    if image == [0] {
-        return ModuleImageKind::HermesStub;
-    }
     ModuleImageKind::Unknown
+}
+
+/// Extract PTX `.entry` symbols so function lookup reflects the module image.
+/// Binary CUDA images are accepted only by their format marker; their symbol
+/// tables are intentionally not fabricated until a format parser is added.
+fn ptx_entry_names(image: &[u8]) -> Vec<String> {
+    let text = match core::str::from_utf8(image) {
+        Ok(text) => text,
+        Err(_) => return Vec::new(),
+    };
+    let bytes = text.as_bytes();
+    let mut names = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(rel) = text[cursor..].find(".entry") {
+        let start = cursor + rel + ".entry".len();
+        let mut pos = start;
+        while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        let name_start = pos;
+        while pos < bytes.len()
+            && (bytes[pos].is_ascii_alphanumeric()
+                || matches!(bytes[pos], b'_' | b'$' | b'@' | b'.'))
+        {
+            pos += 1;
+        }
+        if pos > name_start {
+            let name = &text[name_start..pos];
+            if !names.iter().any(|existing| existing == name) {
+                names.push(name.to_owned());
+            }
+        }
+        cursor = pos.max(start);
+        if cursor >= bytes.len() {
+            break;
+        }
+    }
+    names
+}
+
+fn module_functions(kind: ModuleImageKind, image: &[u8]) -> Vec<String> {
+    match kind {
+        ModuleImageKind::PtxText => ptx_entry_names(image),
+        ModuleImageKind::Fatbin | ModuleImageKind::CubinElf | ModuleImageKind::Unknown => {
+            Vec::new()
+        }
+    }
 }
 
 #[no_mangle]
@@ -1607,13 +1649,35 @@ pub extern "C" fn cuModuleLoadData(module: *mut u64, image: *const u8) -> CudaRe
     if module.is_null() || image.is_null() {
         return CUDA_ERROR_INVALID_VALUE;
     }
-    // Peek up to 256 bytes for magic (host pointer lifetime is caller's).
-    let peek = unsafe { core::slice::from_raw_parts(image, 256) };
-    // Find actual length only for NUL-terminated stubs; fatbin needs real size API later.
-    let kind = if peek[0] == 0 {
-        ModuleImageKind::HermesStub
+    // CUDA's pointer API supplies no length. Inspect the fixed binary magic,
+    // or a bounded NUL-terminated PTX string, without accepting empty data.
+    let first_byte = unsafe { *image };
+    let (kind, image_bytes) = if first_byte == 0 {
+        (ModuleImageKind::Unknown, &[] as &[u8])
     } else {
-        classify_module_image(peek)
+        let first4 = unsafe { core::slice::from_raw_parts(image, 4) };
+        if u32::from_le_bytes([first4[0], first4[1], first4[2], first4[3]]) == 0xBA55_ED50
+            || first4 == [0x7f, b'E', b'L', b'F']
+        {
+            (classify_module_image(first4), first4)
+        } else {
+            let mut len = 0usize;
+            while len < 1024 * 1024 {
+                let byte = unsafe { *image.add(len) };
+                if byte == 0 {
+                    break;
+                }
+                len += 1;
+            }
+            if len == 0 {
+                (ModuleImageKind::Unknown, &[] as &[u8])
+            } else {
+                (
+                    classify_module_image(unsafe { core::slice::from_raw_parts(image, len) }),
+                    unsafe { core::slice::from_raw_parts(image, len) },
+                )
+            }
+        }
     };
     with_state(|s| {
         let g = require_gsp(s);
@@ -1633,15 +1697,13 @@ pub extern "C" fn cuModuleLoadData(module: *mut u64, image: *const u8) -> CudaRe
             ModuleImageKind::Fatbin => "fatbin",
             ModuleImageKind::CubinElf => "cubin",
             ModuleImageKind::PtxText => "ptx",
-            ModuleImageKind::HermesStub => "stub",
             ModuleImageKind::Unknown => "unknown",
         };
         s.modules.push(Module {
             id,
             ctx,
             name: name.into(),
-            // Default export so GetFunction can resolve a kernel without real SM.
-            functions: vec!["hermes_kernel".into(), "main".into()],
+            functions: module_functions(kind, image_bytes),
         });
         unsafe {
             *module = id;
@@ -1665,11 +1727,7 @@ pub extern "C" fn cuModuleUnload(module: u64) -> CudaResult {
 }
 
 #[no_mangle]
-pub extern "C" fn cuModuleGetFunction(
-    hfunc: *mut u64,
-    module: u64,
-    name: *const u8,
-) -> CudaResult {
+pub extern "C" fn cuModuleGetFunction(hfunc: *mut u64, module: u64, name: *const u8) -> CudaResult {
     if hfunc.is_null() || name.is_null() {
         return CUDA_ERROR_INVALID_VALUE;
     }
@@ -1989,12 +2047,7 @@ pub const CUDA_MEMCPY_DEVICE_TO_HOST: i32 = 2;
 pub const CUDA_MEMCPY_DEVICE_TO_DEVICE: i32 = 3;
 
 #[no_mangle]
-pub extern "C" fn cudaMemcpy(
-    dst: u64,
-    src: u64,
-    count: usize,
-    kind: i32,
-) -> CudaResult {
+pub extern "C" fn cudaMemcpy(dst: u64, src: u64, count: usize, kind: i32) -> CudaResult {
     match kind {
         CUDA_MEMCPY_HOST_TO_DEVICE => cuMemcpyHtoD_v2(dst, src as *const u8, count),
         CUDA_MEMCPY_DEVICE_TO_HOST => cuMemcpyDtoH_v2(dst as *mut u8, src, count),
@@ -2068,21 +2121,13 @@ pub extern "C" fn cuDeviceGetLuid(
 }
 
 #[no_mangle]
-pub extern "C" fn cuMemAllocManaged(
-    dptr: *mut u64,
-    bytesize: usize,
-    _flags: u32,
-) -> CudaResult {
+pub extern "C" fn cuMemAllocManaged(dptr: *mut u64, bytesize: usize, _flags: u32) -> CudaResult {
     // Managed shell: same as device alloc under Online (software unified).
     cuMemAlloc_v2(dptr, bytesize)
 }
 
 #[no_mangle]
-pub extern "C" fn cudaMallocManaged(
-    dev_ptr: *mut u64,
-    size: usize,
-    flags: u32,
-) -> CudaResult {
+pub extern "C" fn cudaMallocManaged(dev_ptr: *mut u64, size: usize, flags: u32) -> CudaResult {
     cuMemAllocManaged(dev_ptr, size, flags)
 }
 
@@ -2115,12 +2160,7 @@ pub extern "C" fn cuMemGetAddressRange_v2(
 
 /// Memory advice (software no-op when Online; records success for ABI surface).
 #[no_mangle]
-pub extern "C" fn cuMemAdvise(
-    _dptr: u64,
-    _count: usize,
-    _advice: i32,
-    _device: i32,
-) -> CudaResult {
+pub extern "C" fn cuMemAdvise(_dptr: u64, _count: usize, _advice: i32, _device: i32) -> CudaResult {
     with_state(|s| {
         if !s.driver_init {
             return CUDA_ERROR_NOT_INITIALIZED;
@@ -2271,7 +2311,7 @@ mod tests {
         assert_eq!(cuEventCreate(&mut ev_e, 0), CUDA_SUCCESS);
         assert_eq!(cuEventRecord(ev_s, stream), CUDA_SUCCESS);
 
-        let image = b"\0";
+        let image = b".version 7.0\n.target sm_75\n.visible .entry hermes_kernel() { ret; }\0";
         let mut module = 0u64;
         assert_eq!(cuModuleLoadData(&mut module, image.as_ptr()), CUDA_SUCCESS);
         let mut func = 0u64;
@@ -2281,7 +2321,19 @@ mod tests {
             CUDA_SUCCESS
         );
         assert_eq!(
-            cuLaunchKernel(func, 1, 1, 1, 32, 1, 1, 0, stream, core::ptr::null_mut(), core::ptr::null_mut()),
+            cuLaunchKernel(
+                func,
+                1,
+                1,
+                1,
+                32,
+                1,
+                1,
+                0,
+                stream,
+                core::ptr::null_mut(),
+                core::ptr::null_mut()
+            ),
             CUDA_SUCCESS
         );
         assert_eq!(cuEventRecord(ev_e, stream), CUDA_SUCCESS);
@@ -2344,7 +2396,16 @@ mod tests {
             classify_module_image(b"\x7fELF...."),
             ModuleImageKind::CubinElf
         );
-        assert_eq!(classify_module_image(b"garbage!!"), ModuleImageKind::Unknown);
+        assert_eq!(
+            classify_module_image(b"garbage!!"),
+            ModuleImageKind::Unknown
+        );
+        assert_eq!(classify_module_image(b""), ModuleImageKind::Unknown);
+        assert_eq!(classify_module_image(b"\0"), ModuleImageKind::Unknown);
+        assert_eq!(
+            ptx_entry_names(b".version 7.0\n.visible .entry hermes_kernel() { ret; }"),
+            vec!["hermes_kernel"]
+        );
     }
 
     #[test]
@@ -2502,7 +2563,10 @@ mod tests {
         assert_eq!(cuCtxCreate_v2(&mut ctx, 0, 0), CUDA_SUCCESS);
         let mut luid = [0u8; 8];
         let mut mask = 0u32;
-        assert_eq!(cuDeviceGetLuid(luid.as_mut_ptr(), &mut mask, 0), CUDA_SUCCESS);
+        assert_eq!(
+            cuDeviceGetLuid(luid.as_mut_ptr(), &mut mask, 0),
+            CUDA_SUCCESS
+        );
         assert_eq!(luid[0], b'H');
         assert_eq!(mask, 1);
         let mut d = 0u64;
@@ -2621,6 +2685,22 @@ mod tests {
         );
         assert_eq!(mt, 2);
         assert_eq!(cuIpcCloseMemHandle(d2), CUDA_SUCCESS);
+        hermes_cuda_reset();
+    }
+
+    #[test]
+    fn cuda_turns_expose_bounded_chaos_state() {
+        let _g = TEST_LOCK.lock().unwrap();
+        hermes_cuda_reset();
+        let before = hermes_cuda_chaos_snapshot();
+        let quantum = hermes_cuda_chaos_service_quantum_us();
+        assert!((1..=50).contains(&quantum));
+        assert!(before.lyapunov_exponent.is_finite());
+        hermes_cuda_set_gsp_online(true);
+        let _ = cuInit(0);
+        let after = hermes_cuda_chaos_snapshot();
+        assert!((1..=50).contains(&after.last_interval_us));
+        assert!(after.lyapunov_exponent.is_finite());
         hermes_cuda_reset();
     }
 }

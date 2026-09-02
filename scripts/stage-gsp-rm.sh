@@ -34,6 +34,10 @@ case "$image_sha256:$image_bytes" in
     family=tu10x; version=610.43.03 ;;
   572373620a37418f24dc16b5031c39338778c3257e48e8408de9a57291b24f3a:84277400)
     family=ga10x; version=610.43.03 ;;
+  d157e3b7dd5da2ca8d1ccb6ca98958f9e35d10a9ef7326277ebac133e4b0d1a7:29381504)
+    family=tu10x; version=610.57.04 ;;
+  c0156954f3e048d56011524e0c2ae2881bb6db8173b53f9b2f4eb94197f02999:84310168)
+    family=ga10x; version=610.57.04 ;;
   *)
     printf '%s\n' 'firmware not in Hermes GSP-RM allow-list' >&2
     printf '%s\n' "sha256=$image_sha256 bytes=$image_bytes" >&2

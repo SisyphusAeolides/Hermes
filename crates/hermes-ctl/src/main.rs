@@ -4,31 +4,14 @@
 mod chardev;
 mod silicon;
 
-use hermes_core::{
-    HermesManifold, NVIDIA_VENDOR_ID, admit_display_device, is_nvidia_turing_or_newer,
-    nvidia_architecture, pci_identity,
-};
-use hermes_gsp::{
-    boot_handshake, facts_from_sysfs, run_bringup_ex, sample_turing_boot_offsets,
-    sample_turing_wpr_framebuffer, BringupRequest, FirmwareFamily, HardwareEvidence,
-    NVIDIA_GSP_RM_610_43_02, NVIDIA_GSP_RM_610_43_03, NVIDIA_GSP_RM_DEFAULT_ALLOW_LIST,
-    NvidiaGspFirmwareAuthority, NvidiaGspFirmwareManifest, chip_gsp_relative,
-    default_negotiated_features, drive_full_success, firmware_family_for_device, firmware_version,
-    openrm_gsp_relative, parse_gsp_rm_elf, plan_activation, sha256_bytes, NvidiaChipDir,
-    fwversion_bytes,
+use hermes_cccl::{
+    cub_module_count, hermes_sort, thrust_header_count, CCCL_VERSION, HERMES_HOST_IMPLEMENTED,
+    THRUST_PUBLIC_HEADERS,
 };
 use hermes_core::HermesPlatform;
-use hermes_linux::{
-    drop_in_catalog_len, drop_in_has_all_kmod_names, drop_in_parity_complete,
-    drop_in_parity_percent, linux_bringup, modules, sim_full_hardware, DROP_IN_CATALOG,
-    DROP_IN_PARITY_TARGET, MODULE_SURFACES, SimPlatform,
-};
-use hermes_nouveau::{
-    comparison_matrix, plan_gsp_load, hermes_exclusive_count, NouveauChip,
-};
-use hermes_cccl::{
-    cub_module_count, thrust_header_count, CCCL_VERSION, HERMES_HOST_IMPLEMENTED,
-    THRUST_PUBLIC_HEADERS, hermes_sort,
+use hermes_core::{
+    admit_display_device, is_nvidia_turing_or_newer, nvidia_architecture, pci_identity,
+    HermesManifold, NVIDIA_VENDOR_ID,
 };
 use hermes_cuda::{
     self, cuDeviceGetCount, cuDevicePrimaryCtxRelease, cuDevicePrimaryCtxRetain, cuEventCreate,
@@ -42,14 +25,28 @@ use hermes_drm::{
     page_flip, AtomicCommit, AtomicRequest, DisplayMode, DrmDevice, Framebuffer, PageFlipRequest,
     PixelFormat,
 };
+use hermes_gsp::{
+    boot_handshake, chip_gsp_relative, default_negotiated_features, drive_full_success,
+    facts_from_sysfs, firmware_family_for_device, firmware_version, fwversion_bytes,
+    openrm_gsp_relative, parse_gsp_rm_elf, plan_activation, run_bringup_ex,
+    sample_turing_boot_offsets, sample_turing_wpr_framebuffer, sha256_bytes, BringupRequest,
+    FirmwareFamily, HardwareEvidence, NvidiaChipDir, NvidiaGspFirmwareAuthority,
+    NvidiaGspFirmwareManifest, NVIDIA_GSP_RM_610_43_02, NVIDIA_GSP_RM_610_43_03,
+    NVIDIA_GSP_RM_610_57_04, NVIDIA_GSP_RM_DEFAULT_ALLOW_LIST,
+};
+use hermes_linux::{
+    drop_in_catalog_len, drop_in_has_all_kmod_names, drop_in_parity_complete,
+    drop_in_parity_percent, linux_bringup, modules, sim_full_hardware, SimPlatform,
+    DROP_IN_CATALOG, DROP_IN_PARITY_TARGET, MODULE_SURFACES,
+};
 use hermes_mesa::{
     hermes_mesa_reset, hermes_mesa_set_gsp_online, hermes_present_gem_flip,
     hermes_present_solid_frame, hermes_vulkan_api_version, hermes_vulkan_icd_json,
     hermes_vulkan_icd_library_path, vkCreateDevice, vkCreateInstance, vkDestroyDevice,
-    vkDestroyInstance, vkEnumeratePhysicalDevices, vkGetDeviceQueue,
-    vkGetPhysicalDeviceProperties, HermesVkPhysicalDeviceProperties,
-    VK_ERROR_INCOMPATIBLE_DRIVER, VK_SUCCESS,
+    vkDestroyInstance, vkEnumeratePhysicalDevices, vkGetDeviceQueue, vkGetPhysicalDeviceProperties,
+    HermesVkPhysicalDeviceProperties, VK_ERROR_INCOMPATIBLE_DRIVER, VK_SUCCESS,
 };
+use hermes_nouveau::{comparison_matrix, hermes_exclusive_count, plan_gsp_load, NouveauChip};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -146,8 +143,13 @@ fn status() {
     println!("Scope: NVIDIA Turing and newer (open-gpu-kernel-modules GSP path)");
     println!("Languages: Rust, Fortran, Idris2, Agda");
     println!("Primary module: {}", modules::NVIDIA);
-    println!("Manifold default: {}", HermesManifold::dark(0).phase.label());
-    println!("Kmod tree: linux/kmod (nvidia, nvidia-modeset, nvidia-uvm, nvidia-drm, nvidia-peermem)");
+    println!(
+        "Manifold default: {}",
+        HermesManifold::dark(0).phase.label()
+    );
+    println!(
+        "Kmod tree: linux/kmod (nvidia, nvidia-modeset, nvidia-uvm, nvidia-drm, nvidia-peermem)"
+    );
     println!("Display: hermes-drm atomic modeset + hermes-mesa ICD surface");
     println!("Vulkan ICD library: {}", hermes_vulkan_icd_library_path());
     println!("Vulkan API version: {:#x}", hermes_vulkan_api_version());
@@ -250,7 +252,10 @@ fn bringup_cmd(mode: &str) {
                 plat.dma_alloc_calls()
             );
             if !report.is_online() {
-                eprintln!("error: full evidence should Online, fault={:?}", report.fault);
+                eprintln!(
+                    "error: full evidence should Online, fault={:?}",
+                    report.fault
+                );
                 std::process::exit(1);
             }
             println!("PASS");
@@ -451,7 +456,7 @@ fn silicon_bringup_cmd(mode: &str) {
                 plat.isolate_calls()
             );
             if report.is_online() || plat.isolate_calls() != 0 {
-                eprintln!("error: host-block must fail closed before isolation");
+                eprintln!("error: host-block must reject isolation before the host gate");
                 std::process::exit(1);
             }
             println!("PASS");
@@ -511,9 +516,7 @@ fn smi_smoke(mode: &str) {
         "host" => {
             let mut count = 0u32;
             assert_eq!(nvmlDeviceGetCount_v2(&mut count), NVML_SUCCESS);
-            println!(
-                "smi-smoke host: discovered={discovered} nvml_count={count}"
-            );
+            println!("smi-smoke host: discovered={discovered} nvml_count={count}");
             if count == 0 && discovered == 0 {
                 eprintln!("error: expected host T1000 to appear in NVML via sysfs discover");
                 std::process::exit(1);
@@ -574,7 +577,10 @@ fn smi_smoke(mode: &str) {
 }
 
 fn firmware_pin() {
-    println!("allow-list entries: {}", NVIDIA_GSP_RM_DEFAULT_ALLOW_LIST.len());
+    println!(
+        "allow-list entries: {}",
+        NVIDIA_GSP_RM_DEFAULT_ALLOW_LIST.len()
+    );
     for m in NVIDIA_GSP_RM_610_43_02 {
         println!(
             "610.43.02 {:?} len={} sha256={:02x}{:02x}…",
@@ -584,6 +590,12 @@ fn firmware_pin() {
     for m in NVIDIA_GSP_RM_610_43_03 {
         println!(
             "610.43.03 {:?} len={} sha256={:02x}{:02x}…",
+            m.family, m.byte_length, m.sha256[0], m.sha256[1]
+        );
+    }
+    for m in NVIDIA_GSP_RM_610_57_04 {
+        println!(
+            "610.57.04 {:?} len={} sha256={:02x}{:02x}…",
             m.family, m.byte_length, m.sha256[0], m.sha256[1]
         );
     }
@@ -694,7 +706,7 @@ fn cuda_smoke(mode: &str) {
             assert_eq!(cuStreamCreate(&mut stream, 0), CUDA_SUCCESS);
             let mut ev = 0u64;
             assert_eq!(cuEventCreate(&mut ev, 0), CUDA_SUCCESS);
-            let image = b"\0";
+            let image = b".version 7.0\n.target sm_75\n.visible .entry hermes_kernel() { ret; }\0";
             let mut module = 0u64;
             assert_eq!(cuModuleLoadData(&mut module, image.as_ptr()), CUDA_SUCCESS);
             let mut func = 0u64;
@@ -746,35 +758,73 @@ fn cuda_smoke(mode: &str) {
     }
 }
 
+fn firmware_version_key(value: &str) -> (u32, u32, u32) {
+    let mut parts = value.split('.');
+    (
+        parts.next().and_then(|v| v.parse().ok()).unwrap_or(0),
+        parts.next().and_then(|v| v.parse().ok()).unwrap_or(0),
+        parts.next().and_then(|v| v.parse().ok()).unwrap_or(0),
+    )
+}
+
 fn firmware_scan(root: &str) {
     println!("scan root: {root}");
     let auth = NvidiaGspFirmwareAuthority::default_allow_list();
-    for family in [FirmwareFamily::Tu10x, FirmwareFamily::Ga10x] {
-        let rel = openrm_gsp_relative("610.43.02", family);
-        let path = format!("{root}/{rel}");
-        match std::fs::read(&path) {
-            Ok(bytes) => match auth.admit(
-                match family {
-                    FirmwareFamily::Tu10x => 0x1fb9,
-                    FirmwareFamily::Ga10x => 0x2204,
+    let version_root = std::path::Path::new(root).join("nvidia");
+    let mut versions: Vec<String> = std::fs::read_dir(&version_root)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let ty = entry.file_type().ok()?;
+            if !ty.is_dir() {
+                return None;
+            }
+            let name = entry.file_name().into_string().ok()?;
+            let mut components = name.split('.');
+            (components.clone().count() == 3
+                && components
+                    .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit())))
+            .then_some(name)
+        })
+        .collect();
+    versions.sort_by_key(|a| std::cmp::Reverse(firmware_version_key(a)));
+    if versions.is_empty() {
+        versions.extend([
+            "610.57.04".to_string(),
+            "610.43.03".to_string(),
+            "610.43.02".to_string(),
+        ]);
+    }
+    for version in versions {
+        for family in [FirmwareFamily::Tu10x, FirmwareFamily::Ga10x] {
+            let rel = openrm_gsp_relative(&version, family);
+            let path = std::path::Path::new(root).join(&rel);
+            match std::fs::read(&path) {
+                Ok(bytes) => match auth.admit(
+                    match family {
+                        FirmwareFamily::Tu10x => 0x1fb9,
+                        FirmwareFamily::Ga10x => 0x2204,
+                    },
+                    &bytes,
+                ) {
+                    Ok(v) => {
+                        let elf = parse_gsp_rm_elf(&bytes).ok();
+                        let ver = elf
+                            .as_ref()
+                            .and_then(|e| fwversion_bytes(&bytes, e).ok())
+                            .map(|s| String::from_utf8_lossy(s).into_owned())
+                            .unwrap_or_else(|| "?".into());
+                        println!(
+                            "ADMIT {rel} len={} version_field={ver} pin_version={}",
+                            v.byte_length, v.version
+                        );
+                    }
+                    Err(e) => println!("REJECT {rel}: {e:?}"),
                 },
-                &bytes,
-            ) {
-                Ok(v) => {
-                    let elf = parse_gsp_rm_elf(&bytes).ok();
-                    let ver = elf
-                        .as_ref()
-                        .and_then(|e| fwversion_bytes(&bytes, e).ok())
-                        .map(|s| String::from_utf8_lossy(s).into_owned())
-                        .unwrap_or_else(|| "?".into());
-                    println!(
-                        "ADMIT {rel} len={} version_field={ver} pin_version={}",
-                        v.byte_length, v.version
-                    );
-                }
-                Err(e) => println!("REJECT {rel}: {e:?}"),
-            },
-            Err(_) => println!("ABSENT {rel}"),
+                Err(_) => println!("ABSENT {rel}"),
+            }
         }
     }
 }
@@ -930,7 +980,7 @@ fn drm_smoke(mode: &str) {
                 hermes_drm::edid_preferred_size(edid),
                 dev.props.prop_count()
             );
-            // Offline attach must fail-closed.
+            // Offline attach must remain unavailable.
             let mut off = DrmDevice::virtual_desktop(false);
             assert!(off.attach_synthetic_edid().is_err());
             assert!(off.connector_edid(1).is_none());
@@ -1027,8 +1077,8 @@ fn mesa_smoke(mode: &str) {
 fn stack_smoke() {
     println!("=== stack-smoke: unified session promote + CUDA + DRM + Mesa + smi ===");
     use nvidia_ml::{
-        hermes_nvml_format_device_line, hermes_nvml_process_count, hermes_nvml_session_promote_online,
-        nvmlShutdown,
+        hermes_nvml_format_device_line, hermes_nvml_process_count,
+        hermes_nvml_session_promote_online, nvmlShutdown,
     };
     let snap = hermes_nvml_session_promote_online().expect("session promote");
     assert!(snap.online);
@@ -1063,8 +1113,8 @@ fn stack_smoke() {
 
 fn session_promote_cmd() {
     use nvidia_ml::{
-        hermes_nvml_format_process_lines, hermes_nvml_process_count, hermes_nvml_session_promote_online,
-        nvmlShutdown,
+        hermes_nvml_format_process_lines, hermes_nvml_process_count,
+        hermes_nvml_session_promote_online, nvmlShutdown,
     };
     let snap = hermes_nvml_session_promote_online().expect("promote");
     println!(
@@ -1187,10 +1237,7 @@ fn dropin_complete_cmd() {
 
     // 4) CUDA offline still rejects when GSP token cleared.
     hermes_cuda::hermes_cuda_reset();
-    assert_eq!(
-        hermes_cuda::cuInit(0),
-        CUDA_ERROR_HERMES_GSP_OFFLINE
-    );
+    assert_eq!(hermes_cuda::cuInit(0), CUDA_ERROR_HERMES_GSP_OFFLINE);
     println!("cuda offline after reset: PASS");
 
     // 5) Re-promote and prove smi + settings surfaces see devices.
@@ -1257,32 +1304,31 @@ fn dropin_complete_cmd() {
     drm_smoke("edid");
     assert_eq!(chardev::smoke(), 0);
 
-    // 10) Live kmod Online path when modules present (Turing+ host).
-    if chardev::module_loaded("nvidia") && std::path::Path::new("/dev/nvidiactl").exists() {
-        println!("live kmod present — running kmod-online-smoke");
-        if chardev::kmod_online_smoke() != 0 {
-            eprintln!("error: kmod-online-smoke failed");
-            std::process::exit(1);
-        }
-        println!("live kmod — silicon-fw-smoke (measured GSP-RM pin)");
-        if chardev::silicon_fw_smoke() != 0 {
-            eprintln!("error: silicon-fw-smoke failed");
-            std::process::exit(1);
-        }
-    } else {
-        println!("live kmod absent — skip kmod-online/silicon-fw (run load-kmod.sh first)");
+    // 10) Live kmod Online path is part of this command's contract, not an
+    // optional best-effort branch.  Simulation above is useful for CI, but it
+    // cannot make the complete drop-in claim on its own.
+    if !chardev::module_loaded("nvidia") || !std::path::Path::new("/dev/nvidiactl").exists() {
+        eprintln!("dropin-complete: BLOCKED — live nvidia.ko and /dev/nvidiactl are required; ");
+        std::process::exit(1);
+    }
+    println!("live kmod present — running kmod-online-smoke");
+    if chardev::kmod_online_smoke() != 0 {
+        eprintln!("error: kmod-online-smoke failed");
+        std::process::exit(1);
+    }
+    println!("live kmod — silicon-fw-smoke (measured GSP-RM pin)");
+    if chardev::silicon_fw_smoke() != 0 {
+        eprintln!("error: silicon-fw-smoke failed");
+        std::process::exit(1);
     }
 
-    println!(
-        "dropin-complete: PASS (catalog + gates + multi-surface + live kmod + measured FW)"
-    );
+    println!("dropin-complete: PASS (catalog + gates + multi-surface + live kmod + measured FW)");
 }
-
 
 fn chaos_benchmark() {
     use hermes_core::chaos::ChaosScheduler;
+    use hermes_core::platform::{DmaPurpose, DmaRegion};
     use hermes_core::ring::ZeroCopyRing;
-    use hermes_core::platform::{DmaRegion, DmaPurpose};
 
     println!("hermes-ctl: initializing ZeroCopyRing with Chaotic Backoff...");
     println!("Breaking lock-step synchronization via Lorenz/Duffing attractors...");
@@ -1301,13 +1347,16 @@ fn chaos_benchmark() {
 
     let start = std::time::Instant::now();
     let iters = 1_000_000;
-    
+
     for _ in 0..iters {
         let _slot = ring.acquire_chaotic(&platform, &mut scheduler);
         ring.release_fast();
     }
-    
+
     let elapsed = start.elapsed();
-    println!("Chaotic Ring Throughput: {:.2} M operations/sec", (iters as f64) / elapsed.as_secs_f64() / 1_000_000.0);
+    println!(
+        "Chaotic Ring Throughput: {:.2} M operations/sec",
+        (iters as f64) / elapsed.as_secs_f64() / 1_000_000.0
+    );
     println!("Notice how the chaotic relaxation prevents atomic cache-line starvation and massively boosts throughput.");
 }

@@ -3,7 +3,7 @@
 Hermes is built with **Rust**, **Fortran**, **Idris2**, and **Agda**.
 
 Fortran owns the **exclusive resource / ownership discipline**: IOMMU domains,
-WPR locks, rings, firmware seals, mailbox sessions, and fail-closed GPU handles
+WPR locks, rings, firmware seals, mailbox sessions, and GPU lifecycle handles
 are modeled as handles with a live flag. Transfer subroutines require
 `live=.true.`, kill the source, and return a new live handle. Double-consume is
 `error stop`.
@@ -12,7 +12,7 @@ are modeled as handles with a live flag. Transfer subroutines require
 |---|---|
 | `hermes_resources` | PCI → firmware → domain → BAR/DMA/WPR → Online session |
 | `hermes_rings` | Command/event rings and slot tokens |
-| `hermes_fail_closed` | Live GPU fault / contain / release |
+| `hermes_lifecycle` | Live GPU fault / contain / release lifecycle |
 | `hermes_wpr` | WPR2 plan + SEC2 Booter mailbox |
 | `hermes_bootstrap` | Five-file Turing bootstrap bundle |
 | `hermes_firmware` | GSP-RM measure / hash / ELF seal |

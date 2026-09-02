@@ -4,10 +4,10 @@
 //! instead of static empty GPU lists.
 
 use hermes_core::{
-    NVIDIA_VENDOR_ID, admit_display_device, is_nvidia_turing_or_newer, nvidia_architecture,
-    pci_identity, HermesPhase,
+    admit_display_device, is_nvidia_turing_or_newer, nvidia_architecture, pci_identity,
+    HermesPhase, NVIDIA_VENDOR_ID,
 };
-use hermes_gsp::{firmware_family_for_device, FirmwareFamily, NVIDIA_GSP_RM_610_43_03};
+use hermes_gsp::{firmware_family_for_device, FirmwareFamily, NVIDIA_GSP_RM_610_57_04};
 use hermes_linux::{devices, drop_in_module_name, modules, userspace, MODULE_SURFACES};
 use nvidia_ml::{
     hermes_nvml_brand_name, hermes_nvml_discover_host_gpus, hermes_nvml_format_device_line,
@@ -93,8 +93,8 @@ fn status(sim_online: bool) {
     println!("Drop-in module name: {}", drop_in_module_name(true));
     println!("Supported scope: NVIDIA Turing and newer (GSP-RM required)");
     println!(
-        "Firmware pin: 610.43.03 ({} manifests)",
-        NVIDIA_GSP_RM_610_43_03.len()
+        "Firmware pin: 610.57.04 ({} manifests)",
+        NVIDIA_GSP_RM_610_57_04.len()
     );
     with_nvml_session(sim_online, || {
         let mut count = 0u32;
@@ -168,7 +168,7 @@ fn query(attr: &str, sim_online: bool) {
                 } else if hermes_nvml_gpu_phase(0) != Some(HermesPhase::Online) {
                     println!("Attribute '{attr}' : unavailable (GPU offline)");
                 } else {
-                    println!("Attribute '{attr}' : 0 (default online stub)");
+                    println!("Attribute '{attr}' : unavailable (no hardware control binding)");
                 }
             });
         }
@@ -226,9 +226,7 @@ fn compat_matrix() {
             .unwrap_or("-");
         let identity = pci_identity(NVIDIA_VENDOR_ID, id, 0x03, 0x00);
         let admit = admit_display_device(&identity).is_ok();
-        let arch = nvidia_architecture(id)
-            .map(|a| a.as_str())
-            .unwrap_or("n/a");
+        let arch = nvidia_architecture(id).map(|a| a.as_str()).unwrap_or("n/a");
         println!("{id:#06x}  {name:<18} {turing_plus:<8} {fam:<10} {admit} ({arch})");
     }
 }

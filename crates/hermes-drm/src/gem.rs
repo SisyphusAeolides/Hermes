@@ -52,10 +52,7 @@ pub struct GemObject {
 }
 
 impl GemObject {
-    pub fn create_dumb(
-        handle: u32,
-        req: &DumbCreateRequest,
-    ) -> Result<Self, GemError> {
+    pub fn create_dumb(handle: u32, req: &DumbCreateRequest) -> Result<Self, GemError> {
         if req.width == 0 || req.height == 0 || req.bpp == 0 {
             return Err(GemError::InvalidSize);
         }

@@ -13,7 +13,7 @@ Both are **GSP-gated**: Offline never applies modeset or advertises a GPU.
 
 - `DrmDevice::virtual_desktop` — single-head virtual topology
 - `DrmDevice::virtual_dual_head` — dual CRTC / plane / connector
-- `AtomicCommit::commit` — fail-closed atomic apply
+- `AtomicCommit::commit` — evidence-gated atomic apply
 - `AtomicCommit::disable_crtc` — blank a pipe
 - `GemManager` / `create_dumb` — GEM-like dumb buffers (pitch 64-aligned)
 - `flink` / `open_name` / PRIME export-import tokens
@@ -30,7 +30,7 @@ Both are **GSP-gated**: Offline never applies modeset or advertises a GPU.
 - Host-testable logic: `make -C linux/kmod host-test`
 
 This is **not** full DRM subsystem registration yet (no `drm_device` / KMS
-connector sysfs). It is the fail-closed ioctl + userspace state machine pair.
+connector sysfs). It is the evidence-gated ioctl + userspace state machine pair.
 
 ## hermes-mesa
 

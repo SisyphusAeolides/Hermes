@@ -34,6 +34,17 @@ Observed on this host for **610.43.02**:
 
 Hermes also keeps a pin for **610.43.03** (from open-gpu-kernel-modules era staging): same lengths, different digests.
 
+The current qualification host also stages **610.57.04**:
+
+| File | Bytes | SHA-256 (full) | Format |
+|---|---:|---|---|
+| `gsp_tu10x.bin` | 29 381 504 | `d157e3b7…b0d1a7` | ELF64 RISC-V REL |
+| `gsp_ga10x.bin` | 84 310 168 | `c0156954…f02999` | ELF64 RISC-V REL |
+
+The 610.57.04 digests are admitted alongside the earlier pins. Hermes still
+requires the exact length, digest, and ELF structure; a newer unpinned image
+must be measured and reviewed before it can be used.
+
 ### B. Chip-tree linux-firmware (Nouveau / multi-version)
 
 ```text

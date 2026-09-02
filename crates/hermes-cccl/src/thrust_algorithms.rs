@@ -90,7 +90,9 @@ pub const HERMES_HOST_IMPLEMENTED: &[&str] = &[
     "scan",
 ];
 
-pub fn thrust_header_count() -> usize { THRUST_PUBLIC_HEADERS.len() }
+pub fn thrust_header_count() -> usize {
+    THRUST_PUBLIC_HEADERS.len()
+}
 
 pub fn is_public_thrust_header(stem: &str) -> bool {
     THRUST_PUBLIC_HEADERS.contains(&stem)

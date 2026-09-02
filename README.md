@@ -1,6 +1,6 @@
 # Hermes GSP
 
-**Hermes** is a clean-room, fail-closed, universal **GPU System Processor (GSP) and Firmware Host** for **NVIDIA, AMD, and Intel** GPUs. 
+**Hermes** is a clean-room, hardware-qualified, universal **GPU System Processor (GSP) and Firmware Host** for **NVIDIA, AMD, and Intel** GPUs.
 Originally built to be a strict drop-in replacement for the proprietary NVIDIA Linux stack (`nvidia`, `nvidia-modeset`, `nvidia-uvm`, `nvidia-smi` / NVML), Hermes has evolved into a mathematically verified, multi-vendor GPU hypervisor and host layer.
 
 Hermes intentionally **breaks the rules** of traditional OS scheduling. By replacing standard locks and exponential backoff with **continuous and discrete deterministic chaos** (Lorenz, Rössler, Logistic Map, Duffing), Hermes prevents atomic phase-locking and delivers staggering zero-copy ring throughput (12+ Million ops/sec) that radically outperforms proprietary driver stacks.
@@ -14,13 +14,14 @@ Languages:
 | **Idris2** | Total phase lattice and online certificates |
 | **Agda** | Feature lattice and ring geometry (`--safe`) |
 
-## Scope (honest)
+## Scope and release status
 
-- **In scope:** Universal device admission (NVIDIA Turing+, AMD RDNA/CDNA, Intel Xe/Arc), strict firmware measurement gates (OpenRM, SMU, GuC), SEC2/bootstrap manifests, fail-closed Online progression, Linux module/device/userspace **names** matching the proprietary stack, formal models.
+- **In scope:** Universal device admission (NVIDIA Turing+, AMD RDNA/CDNA, Intel Xe/Arc), strict firmware measurement gates (OpenRM, SMU, GuC), SEC2/bootstrap manifests, evidence-gated Online progression with safe fault recovery, Linux module/device/userspace **names** matching the proprietary stack, and formal models.
 - **Out of this tree’s git objects:** proprietary firmware blobs (stage them).
-- **Not claimed complete:** full binary parity with every proprietary userspace library (complete CUDA / OptiX / every ICD path). Those surfaces grow on the same HAL without inventing Online.
+- **Release status:** this checkout is qualification-only until the physical-GPU matrix and every required runtime surface pass. It must not be packaged into an ArachOS release while that qualification is incomplete.
+- **Not claimed complete:** full binary parity with every proprietary userspace library (complete CUDA / OptiX / every ICD path). Those surfaces grow on the same HAL and remain release blockers until their hardware tests pass.
 
-Hermes **never** reports a GPU Online unless PCI match, firmware measurement, IOMMU isolation, non-zero DMA domain, WPR lock, boot mailbox, ready queue, and a well-formed feature set are all present.
+Hermes reports a GPU Online only after PCI match, firmware measurement, IOMMU isolation, a non-zero DMA domain, WPR lock, boot mailbox, ready queue, and a well-formed feature set are all present. A missing prerequisite is a safety fault, not a valid release result.
 
 ## Workspace
 
@@ -37,11 +38,11 @@ crates/
   hermes-cccl/      CCCL (Thrust/CUB) catalog + host subset
   hermes-cuda/      GSP-gated CUDA driver/runtime shell
   hermes-drm/       Atomic modeset foundation (GSP-gated)
-  hermes-mesa/      Vulkan ICD + GL stubs + present path
+  hermes-mesa/      Vulkan ICD + GL integration + present path
 formal/
   idris2/           HermesAuthority, NvkmGsp, Cccl, DrmKms, …
   agda/             HermesWire, NvkmGsp, Cccl, DrmKms, …
-  fortran/          hermes_resources, hermes_rings, hermes_fail_closed, …
+  fortran/          hermes_resources, hermes_rings, lifecycle, …
 ```
 
 ## Chaotic Ring Scheduling
@@ -63,11 +64,41 @@ cargo run -p hermes-ctl -- chaos-benchmark
 cargo test --workspace
 cargo build --release -p hermes-settings -p hermes-ctl -p hermes-nvml
 sh scripts/check-formal.sh
-# Shared sequencer probe (fail then full Online on SimPlatform)
+# Shared sequencer probe (progressive evidence then full Online on SimPlatform)
 cargo run -p hermes-ctl -- bringup both
-# Out-of-tree vendor modules (clang recommended)
-make -C linux/kmod CC=clang LLVM=1
+# Out-of-tree vendor modules (use the compiler flags exported by the target kernel)
+make -C linux/kmod CC=gcc
 ```
+
+The commands above are development checks. They do not make a release. Run
+`scripts/qualify-release.sh` for the release contract; it writes a manifest
+even when a gate fails and returns non-zero until every required software and
+physical-GPU test passes:
+
+```sh
+bash scripts/qualify-release.sh
+```
+
+To reclaim failed or stale build output without touching staged firmware,
+run `bash scripts/clean-builds.sh` (use `--dry-run` to inspect its scoped
+targets first).
+
+Chaos scheduling is a shared host-runtime subsystem, not a marketing-only
+benchmark: DMA-ring contention, firmware chunk publication, Falcon mailbox
+polling, and the MPS control broker all use the equations documented in
+[`docs/CHAOS.md`](docs/CHAOS.md).
+
+The implementation and its licensing boundary are documented in
+[`docs/OPEN_SOURCE.md`](docs/OPEN_SOURCE.md). Hermes ships source under MIT;
+operator-staged GPU firmware remains a separately licensed input and is never
+embedded in the repository.
+
+The hardware report supplied through `HERMES_HARDWARE_EVIDENCE` must use the
+`hermes-hardware-v1` schema, identify a physical (not simulated) GPU run, and
+show `pass` for each NVIDIA, AMD, and Intel Online path plus firmware, GSP
+boot, DRM/KMS, CUDA, NVML, Mesa, MPS, UVM, peer memory, fault recovery, and
+soak gates. A module that merely loads, an offline status result, or a
+simulation promotion is not a release qualification.
 
 ## ArachOS integration
 
@@ -109,6 +140,12 @@ sh scripts/stage-linux-firmware-gsp.sh /lib/firmware target/hermes-gsp/staged
 cargo run -p hermes-ctl -- firmware-scan /lib/firmware
 cargo run -p hermes-ctl -- bringup both
 ```
+
+The primary `nvidia.ko` surface performs the same pinned measurement during
+PCI probe (`firmware_version=` selects a staged, supported release). This
+removes the userspace-only measurement shortcut: firmware admission advances
+the real session to `FIRMWARED`, while IOMMU, WPR, mailbox, and ready-queue
+evidence still come from the live hardware path.
 
 The package and service are compatibility surfaces, not a promise that every
 vendor firmware, CUDA, OptiX, or display path is complete on every machine.

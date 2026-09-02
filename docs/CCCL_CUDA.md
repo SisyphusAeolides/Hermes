@@ -38,9 +38,9 @@ Produces Thrust/CUB tables, formal models, and inventory JSON.
 | Crate | Purpose |
 |---|---|
 | `hermes-cccl` | Thrust header catalog, CUB modules, **host** algorithm subset |
-| `hermes-cuda` | `cu*` / `cuda*` ABI shell, **fails closed without GSP Online** |
+| `hermes-cuda` | `cu*` / `cuda*` ABI surface, requires GSP Online for device work |
 
-## Fail-closed CUDA
+## Evidence-gated CUDA
 
 ```text
 cuInit / cudaGetDeviceCount

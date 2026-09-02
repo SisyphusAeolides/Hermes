@@ -6,7 +6,7 @@ module DrmKms
 public export
 data DrmObject = Connector | Crtc | Plane | Framebuffer
 
-||| Scanout is only legal when GSP is Online (Hermes fail-closed).
+||| Scanout is only legal when GSP is Online (Hermes evidence gate).
 public export
 data GspGate = GspOffline | GspOnline
 

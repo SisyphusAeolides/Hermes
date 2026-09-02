@@ -7,7 +7,7 @@ obj-m += nvidia-uvm.o
 obj-m += nvidia-drm.o
 obj-m += nvidia-peermem.o
 
-nvidia-y := hermes_core_mod.o hermes_bringup.o hermes_chardev.o nvidia_main.o
+nvidia-y := hermes_bringup.o hermes_chardev.o nvidia_main.o
 nvidia-modeset-y := hermes_modeset_main.o
 nvidia-uvm-y := hermes_uvm_main.o
 nvidia-drm-y := hermes_drm_logic.o hermes_drm_main.o

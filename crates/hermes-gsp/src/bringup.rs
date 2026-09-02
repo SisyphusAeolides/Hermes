@@ -2,7 +2,8 @@
 //!
 //! Walks Turing+ admission → optional host preflight → measured GSP-RM →
 //! platform isolation/BAR/DMA full-image stage → optional live mailbox/WPR →
-//! fail-closed manifold gates. Online only when every evidence token is present.
+//! evidence-gated manifold progression. Online only when every evidence token
+//! is present.
 //! Production kmod and hermes-ctl call this path.
 
 use hermes_abi::hermes::HermesPciIdentity;
@@ -12,9 +13,7 @@ use hermes_core::{
 };
 
 use crate::bootstrap::{TuringGspBootstrapMaterial, VerifiedTuringGspBootstrap};
-use crate::firmware::{
-    firmware_family_for_device, NvidiaGspFirmwareAuthority, VerifiedFirmware,
-};
+use crate::firmware::{firmware_family_for_device, NvidiaGspFirmwareAuthority, VerifiedFirmware};
 use crate::host_gate::{host_preflight_fault, HostDeviceFacts};
 use crate::mailbox::{boot_handshake, MailboxEvidence};
 use crate::session::default_negotiated_features;
@@ -73,7 +72,7 @@ pub struct BringupRequest<'a> {
     pub wpr_framebuffer: Option<TuringFramebufferEvidence>,
     pub wpr_boot_offsets: Option<TuringRiscvBootOffsets>,
     pub gsp_boot_binary_address: Option<u64>,
-    /// Host IOMMU/driver/BAR facts; when set, preflighted fail-closed.
+    /// Host IOMMU/driver/BAR facts; when set, preflighted before progression.
     pub host_facts: Option<HostDeviceFacts>,
     /// Keep domain/BAR/DMA live for the caller when Online.
     pub retain_on_online: bool,
@@ -196,10 +195,7 @@ fn fail<P: HermesPlatform>(report: BringupReport) -> BringupOutcome<P> {
 }
 
 /// Compat wrapper: always releases domain/BAR/DMA before return.
-pub fn run_bringup<P: HermesPlatform>(
-    platform: &P,
-    request: &BringupRequest<'_>,
-) -> BringupReport {
+pub fn run_bringup<P: HermesPlatform>(platform: &P, request: &BringupRequest<'_>) -> BringupReport {
     let outcome = run_bringup_ex(platform, request);
     let mut report = outcome.release(platform);
     report.resources_retained = false;
@@ -400,13 +396,12 @@ pub fn run_bringup_ex<P: HermesPlatform>(
         };
         let boot_bin = request.gsp_boot_binary_address.unwrap_or(0x1_0200_0000);
         let meta_addr = (boot_bin.wrapping_add(T1000_GSP_BOOT_BINARY_BYTES) + 4095) & !4095u64;
-        let gsp_rm_iova = if stage_rep.last_device_address != 0
-            && stage_rep.last_device_address % 4096 == 0
-        {
-            stage_rep.last_device_address
-        } else {
-            0x1_0000_0000
-        };
+        let gsp_rm_iova =
+            if stage_rep.last_device_address != 0 && stage_rep.last_device_address % 4096 == 0 {
+                stage_rep.last_device_address
+            } else {
+                0x1_0000_0000
+            };
         let dma_in = TuringGspDmaInputs {
             gsp_rm_address: gsp_rm_iova,
             gsp_rm_bytes: stage_rep.bytes_staged,

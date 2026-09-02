@@ -19,7 +19,7 @@ fortran_modules = [
   "hermes_kinds",
   "hermes_resources",
   "hermes_rings",
-  "hermes_fail_closed",
+  "hermes_lifecycle",
   "hermes_wpr",
   "hermes_bootstrap",
   "hermes_firmware",

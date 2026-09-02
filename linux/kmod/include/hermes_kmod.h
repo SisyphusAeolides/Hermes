@@ -1,4 +1,4 @@
-/* Shared Hermes kmod API — clean-room, fail-closed GSP bring-up. */
+/* Shared Hermes kmod API — clean-room, evidence-driven GSP bring-up. */
 #ifndef HERMES_KMOD_H
 #define HERMES_KMOD_H
 
@@ -78,6 +78,13 @@ extern bool hermes_allow_sim_promote;
 /* Character device surface (/dev/nvidiactl, /dev/nvidia0). */
 int hermes_chardev_init(void);
 void hermes_chardev_exit(void);
+
+/* Kernel firmware loader feeds the same pinned measurement boundary as the
+ * userspace MEASURE_FW ioctl.  A successful measure advances the session to
+ * FIRMWARED; hardware isolation, WPR, mailbox, and ready-queue evidence still
+ * have to be observed before Online can be published. */
+int hermes_firmware_measure(u32 byte_length, const u8 *sha256);
+bool hermes_firmware_is_admitted(void);
 
 /* Peermem companion: registration authorized only when GSP Online. */
 bool hermes_peermem_register_ok(void);

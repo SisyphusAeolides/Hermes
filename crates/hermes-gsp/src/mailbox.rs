@@ -1,9 +1,9 @@
-//! GSP Falcon mailbox / command-queue RPC (OpenRM-shaped, fail-closed).
+//! GSP Falcon mailbox / command-queue RPC (OpenRM-shaped, evidence-driven).
 //!
 //! Uses published TU102 GSP MMIO offsets. Does not invent ready: callers must
 //! observe non-zero ready evidence from real MMIO or a test double.
 
-use hermes_core::{HermesFault, HermesPlatform, MmioWindow};
+use hermes_core::{chaos::ChaosScheduler, HermesFault, HermesPlatform, MmioWindow};
 
 use crate::regs::tu102::{
     NV_PGSP_FALCON_ENGINE, NV_PGSP_FALCON_ENGINE_RESET_FALSE, NV_PGSP_FALCON_ENGINE_RESET_TRUE,
@@ -65,7 +65,11 @@ pub fn falcon_reset_pulse<P: HermesPlatform>(
 ) -> Result<(), MailboxError> {
     platform.write32(bar, NV_PGSP_FALCON_ENGINE, NV_PGSP_FALCON_ENGINE_RESET_TRUE)?;
     platform.io_fence()?;
-    platform.write32(bar, NV_PGSP_FALCON_ENGINE, NV_PGSP_FALCON_ENGINE_RESET_FALSE)?;
+    platform.write32(
+        bar,
+        NV_PGSP_FALCON_ENGINE,
+        NV_PGSP_FALCON_ENGINE_RESET_FALSE,
+    )?;
     platform.io_fence()?;
     let eng = platform.read32(bar, NV_PGSP_FALCON_ENGINE)?;
     if eng & NV_PGSP_FALCON_ENGINE_RESET_TRUE != 0 {
@@ -76,7 +80,8 @@ pub fn falcon_reset_pulse<P: HermesPlatform>(
 
 /// Post a 32-bit command token into MAILBOX0 and wait for MAILBOX1 response.
 ///
-/// `wait_ready` polls until `mailbox1 != 0` or attempts exhausted. Fail-closed:
+/// `wait_ready` polls until `mailbox1 != 0` or attempts exhausted. A timeout
+/// leaves the session offline:
 /// never fabricates a response.
 pub fn rpc_post_u32<P: HermesPlatform>(
     platform: &P,
@@ -89,12 +94,23 @@ pub fn rpc_post_u32<P: HermesPlatform>(
     platform.write32(bar, NV_PGSP_FALCON_MAILBOX0, command)?;
     platform.io_fence()?;
 
+    let mut scheduler = ChaosScheduler::new();
+    let mut dt = 0.005f32;
     for _ in 0..max_polls {
         let resp = platform.read32(bar, NV_PGSP_FALCON_MAILBOX1)?;
         if resp != 0 {
             return Ok(resp);
         }
-        platform.relax();
+        /*
+         * Use the same attractor mixer as command rings.  This keeps several
+         * firmware clients from polling MAILBOX1 in lock-step while the
+         * platform still controls what a relax operation means.
+         */
+        platform.chaos_relax(&mut scheduler, dt);
+        dt += 0.001;
+        if dt > 0.05 {
+            dt = 0.005;
+        }
     }
     Err(MailboxError::NotReady)
 }

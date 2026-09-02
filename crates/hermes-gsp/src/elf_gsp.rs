@@ -50,7 +50,11 @@ pub fn parse_gsp_rm_elf(image: &[u8]) -> Result<GspElfEvidence, HermesFault> {
         return Err(HermesFault::FirmwareRejected);
     }
     let table_end = e_shoff
-        .checked_add(e_shnum.checked_mul(e_shentsize).ok_or(HermesFault::FirmwareRejected)?)
+        .checked_add(
+            e_shnum
+                .checked_mul(e_shentsize)
+                .ok_or(HermesFault::FirmwareRejected)?,
+        )
         .ok_or(HermesFault::FirmwareRejected)?;
     if table_end > image.len() as u64 {
         return Err(HermesFault::FirmwareRejected);
@@ -113,7 +117,10 @@ pub fn parse_gsp_rm_elf(image: &[u8]) -> Result<GspElfEvidence, HermesFault> {
 }
 
 /// Extract the ASCII version string from `.fwversion` (NUL-trimmed).
-pub fn fwversion_bytes<'a>(image: &'a [u8], evidence: &GspElfEvidence) -> Result<&'a [u8], HermesFault> {
+pub fn fwversion_bytes<'a>(
+    image: &'a [u8],
+    evidence: &GspElfEvidence,
+) -> Result<&'a [u8], HermesFault> {
     let start = evidence.fwversion_offset as usize;
     let end = start
         .checked_add(evidence.fwversion_size as usize)

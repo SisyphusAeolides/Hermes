@@ -59,7 +59,7 @@ echo "nodes:"
 ls -l /dev/nvidiactl /dev/nvidia0 /dev/nvidia-drm /dev/nvidia-uvm \
   /dev/nvidia-uvm-tools /dev/nvidia-modeset /dev/nvidia-peermem 2>/dev/null || true
 
-# Prove ioctl STATUS on nvidiactl + companions (fail-closed unless HERMES_SIM_PROMOTE=1).
+# Prove ioctl STATUS on nvidiactl + companions (evidence-gated unless HERMES_SIM_PROMOTE=1).
 HERMES_SIM_PROMOTE="${HERMES_SIM_PROMOTE:-0}" python3 - <<'PY'
 import array, fcntl, os, sys
 IOC_READ = 2

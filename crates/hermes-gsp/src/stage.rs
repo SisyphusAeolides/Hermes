@@ -6,7 +6,7 @@
 //! running SHA-256 of staged bytes is returned so callers can prove the full
 //! image crossed the DMA boundary (not just the first 4 KiB).
 
-use hermes_core::{DmaPurpose, DmaRegion, HermesFault, HermesPlatform};
+use hermes_core::{chaos::ChaosScheduler, DmaPurpose, DmaRegion, HermesFault, HermesPlatform};
 use sha2::{Digest, Sha256};
 
 /// Default DMA chunk size (one page). Matches T1000 GSP boot binary page.
@@ -58,6 +58,7 @@ pub fn stage_gsp_rm_image<P: HermesPlatform>(
     let mut hasher = Sha256::new();
     let mut offset = 0usize;
     let mut chunks = 0u32;
+    let mut scheduler = ChaosScheduler::new();
 
     while offset < image.len() {
         let end = core::cmp::min(offset + chunk_len, image.len());
@@ -75,6 +76,9 @@ pub fn stage_gsp_rm_image<P: HermesPlatform>(
         hasher.update(slice);
         offset = end;
         chunks = chunks.saturating_add(1);
+        /* Decorrelate concurrent firmware chunk publishers without changing
+         * the byte order or digest that crosses the DMA boundary. */
+        platform.chaos_relax(&mut scheduler, 0.01);
     }
 
     let digest = hasher.finalize();
@@ -185,12 +189,7 @@ mod tests {
             }
             Ok(())
         }
-        fn dma_read(
-            &self,
-            _: DmaRegion<u32>,
-            _: usize,
-            _: &mut [u8],
-        ) -> Result<(), HermesFault> {
+        fn dma_read(&self, _: DmaRegion<u32>, _: usize, _: &mut [u8]) -> Result<(), HermesFault> {
             Ok(())
         }
         fn dma_publish(
@@ -204,12 +203,7 @@ mod tests {
             }
             Ok(())
         }
-        fn dma_acquire(
-            &self,
-            _: DmaRegion<u32>,
-            _: usize,
-            _: usize,
-        ) -> Result<(), HermesFault> {
+        fn dma_acquire(&self, _: DmaRegion<u32>, _: usize, _: usize) -> Result<(), HermesFault> {
             Ok(())
         }
         fn now_tick(&self) -> u64 {

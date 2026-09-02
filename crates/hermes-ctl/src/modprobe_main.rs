@@ -204,7 +204,7 @@ fn run_actions(opts: &Opts) {
     }
 
     if failed {
-        eprintln!("nvidia-modprobe: one or more actions failed (fail-closed)");
+        eprintln!("nvidia-modprobe: one or more actions failed");
         process::exit(1);
     }
     if opts.verbose {
@@ -370,10 +370,7 @@ fn ensure_device_node(path: &str, verbose: bool) -> Result<&'static str, String>
             if verbose {
                 eprintln!("  mknod {path}: {}", err.trim());
             }
-            Err(format!(
-                "mknod failed (need privileges?): {}",
-                err.trim()
-            ))
+            Err(format!("mknod failed (need privileges?): {}", err.trim()))
         }
         Err(e) => Err(format!("mknod unavailable: {e}")),
     }

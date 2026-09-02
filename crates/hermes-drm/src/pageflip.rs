@@ -3,6 +3,7 @@
 use crate::atomic::{AtomicCommit, AtomicRequest, CommitError, CommitResult};
 use crate::device::DrmDevice;
 use crate::mode::DisplayMode;
+use hermes_core::chaos::ChaosScheduler;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FlipError {
@@ -38,6 +39,10 @@ pub struct VblankState {
     pub sequence: u64,
     pub timestamp_ns: u64,
     pub pending_events: alloc::vec::Vec<VblankEvent>,
+    /// Host-side phase decorrelation for page-flip queue turns.  This value
+    /// never changes the hardware vblank period or grants display authority.
+    pub service_quantum_us: u32,
+    scheduler: ChaosScheduler,
 }
 
 impl VblankState {
@@ -46,11 +51,14 @@ impl VblankState {
             sequence: 0,
             timestamp_ns: 0,
             pending_events: alloc::vec::Vec::new(),
+            service_quantum_us: 1,
+            scheduler: ChaosScheduler::new(),
         }
     }
 
     /// Advance software vblank clock (≈16.67 ms for 60 Hz).
     pub fn tick(&mut self, crtc_id: u32, fb_id: u32, period_ns: u64) -> VblankEvent {
+        self.service_quantum_us = self.scheduler.next_interval(0.01);
         self.sequence = self.sequence.wrapping_add(1);
         self.timestamp_ns = self.timestamp_ns.wrapping_add(period_ns);
         let ev = VblankEvent {
@@ -184,5 +192,6 @@ mod tests {
         let ev = dev.vblank.pop_event().unwrap();
         assert_eq!(ev.fb_id, 11);
         assert_eq!(ev.sequence, 1);
+        assert!((1..=50).contains(&dev.vblank.service_quantum_us));
     }
 }

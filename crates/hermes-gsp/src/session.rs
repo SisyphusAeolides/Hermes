@@ -1,11 +1,9 @@
-//! Fail-closed activation plan: ordered steps that feed the Hermes manifold.
+//! Evidence-driven activation plan: ordered steps that feed the Hermes manifold.
 //!
 //! This module does not talk to hardware. It sequences the only legal order of
 //! evidence publication. Online requires every step to succeed.
 
-use hermes_core::{
-    HermesManifold, HermesPhase, ManifoldFault, NvidiaArchitecture, feature,
-};
+use hermes_core::{feature, HermesManifold, HermesPhase, ManifoldFault, NvidiaArchitecture};
 
 use crate::firmware::{FirmwareFamily, VerifiedFirmware};
 
@@ -91,10 +89,10 @@ pub const fn default_negotiated_features() -> u64 {
 mod tests {
     use super::*;
     use crate::firmware::{
-        FirmwareFamily, NvidiaGspFirmwareAuthority, NvidiaGspFirmwareManifest, firmware_version,
-        sha256_bytes,
+        firmware_version, sha256_bytes, FirmwareFamily, NvidiaGspFirmwareAuthority,
+        NvidiaGspFirmwareManifest,
     };
-    use hermes_core::{NvidiaArchitecture, admit_display_device, pci_identity, NVIDIA_VENDOR_ID};
+    use hermes_core::{admit_display_device, pci_identity, NvidiaArchitecture, NVIDIA_VENDOR_ID};
 
     #[test]
     fn plan_matches_architecture_and_never_skips_steps() {

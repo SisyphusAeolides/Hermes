@@ -1,4 +1,4 @@
-//! Host-side isolation and BAR readiness gates (pure logic, fail-closed).
+//! Host-side isolation and BAR readiness gates (pure logic, evidence-driven).
 //!
 //! These predicates decide whether a Linux/sysfs view of a device is allowed to
 //! attempt Hermes GSP Online. They never invent success: missing IOMMU or a
@@ -9,7 +9,7 @@ use hermes_core::HermesFault;
 /// Snapshot of host sysfs facts for one NVIDIA display GPU.
 ///
 /// Built at the host edge (sysfs); pure gate logic lives here so bring-up and
-/// tests share one fail-closed policy without inventing Online.
+/// tests share one policy without inventing Online.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct HostDeviceFacts {
     /// Present when `/sys/.../iommu_group` resolves to a group id.

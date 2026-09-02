@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 /*
  * Host-testable DRM logic for Hermes nvidia-drm.
- * Mirrors hermes-drm fail-closed policy without inventing Online.
+ * Mirrors hermes-drm evidence-gated policy without inventing Online.
  */
 
 #ifdef HERMES_HOST_TEST

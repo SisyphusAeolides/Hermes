@@ -62,7 +62,7 @@ pub fn build_base_edid(mode: DisplayMode, name: &str) -> Vec<u8> {
     e[97] = 30; // min hrate
     e[98] = 100; // max hrate
     e[99] = 16; // max pixel clock / 10MHz
-    // Extension flag
+                // Extension flag
     e[126] = 0;
     // Checksum
     let sum: u32 = e[..127].iter().map(|&b| b as u32).sum();

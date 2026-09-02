@@ -14,9 +14,9 @@ use nvidia_ml::{
     nvmlDeviceGetCount_v2, nvmlDeviceGetCudaComputeCapability, nvmlDeviceGetEnforcedPowerLimit,
     nvmlDeviceGetFanSpeed, nvmlDeviceGetHandleByIndex_v2, nvmlDeviceGetMemoryInfo,
     nvmlDeviceGetName, nvmlDeviceGetPCIBusId, nvmlDeviceGetPersistenceMode,
-    nvmlDeviceGetPowerUsage, nvmlDeviceGetTemperature, nvmlDeviceGetUtilizationRates,
-    nvmlInit_v2, nvmlShutdown, nvmlSystemGetCudaDriverVersion_v2, nvmlSystemGetDriverVersion,
-    NvmlMemory_t, NvmlUtilization_t, NVML_CLOCK_GRAPHICS, NVML_CLOCK_MEM, NVML_SUCCESS,
+    nvmlDeviceGetPowerUsage, nvmlDeviceGetTemperature, nvmlDeviceGetUtilizationRates, nvmlInit_v2,
+    nvmlShutdown, nvmlSystemGetCudaDriverVersion_v2, nvmlSystemGetDriverVersion, NvmlMemory_t,
+    NvmlUtilization_t, NVML_CLOCK_GRAPHICS, NVML_CLOCK_MEM, NVML_SUCCESS,
 };
 
 fn cstr_buf(buf: &[i8]) -> String {
@@ -39,7 +39,9 @@ fn main() {
     let want_sim_online = args.iter().any(|a| a == "--hermes-sim-online")
         || std::env::var("HERMES_SMI_SIM_ONLINE").ok().as_deref() == Some("1");
     let want_reset = args.iter().any(|a| a == "--hermes-reset");
-    let csv = args.iter().any(|a| a == "--format=csv" || a.starts_with("--format=csv,"));
+    let csv = args
+        .iter()
+        .any(|a| a == "--format=csv" || a.starts_with("--format=csv,"));
     let noheader = args.iter().any(|a| a.contains("noheader"))
         || args
             .iter()
@@ -56,21 +58,11 @@ fn main() {
     let discovered = hermes_nvml_discover_host_gpus();
     if want_sim_online && hermes_nvml_gpu_count() > 0 {
         let _ = hermes_nvml_promote_first_sim_online();
-        let _ = hermes_nvml_register_process(
-            0,
-            std::process::id(),
-            64 * 1024 * 1024,
-            "nvidia-smi",
-        );
+        let _ = hermes_nvml_register_process(0, std::process::id(), 64 * 1024 * 1024, "nvidia-smi");
     } else if want_sim_online && hermes_nvml_gpu_count() == 0 {
         // No host GPU: still allow a sim Online bind for CI/smoke.
         hermes_nvml_bind_sim_online_session("Hermes Sim GPU");
-        let _ = hermes_nvml_register_process(
-            0,
-            std::process::id(),
-            64 * 1024 * 1024,
-            "nvidia-smi",
-        );
+        let _ = hermes_nvml_register_process(0, std::process::id(), 64 * 1024 * 1024, "nvidia-smi");
     }
 
     if args.iter().any(|a| a == "-L" || a == "--list-gpus") {
@@ -80,11 +72,14 @@ fn main() {
     }
 
     if let Some(q) = args.iter().find_map(|a| a.strip_prefix("--query-gpu=")) {
-        query_gpu_fields(q, QueryFormat {
-            csv,
-            header: !noheader,
-            units: !nounits,
-        });
+        query_gpu_fields(
+            q,
+            QueryFormat {
+                csv,
+                header: !noheader,
+                units: !nounits,
+            },
+        );
         let _ = nvmlShutdown();
         return;
     }
@@ -169,10 +164,7 @@ fn query_gpu_fields(spec: &str, fmt: QueryFormat) {
     if fmt.header {
         if fmt.csv {
             // Classic: name [MHz], temperature.gpu [C], ...
-            let headers: Vec<String> = fields
-                .iter()
-                .map(|f| csv_header(f, fmt.units))
-                .collect();
+            let headers: Vec<String> = fields.iter().map(|f| csv_header(f, fmt.units)).collect();
             println!("{}", headers.join(sep));
         } else {
             println!("{}", fields.join(sep));
@@ -372,7 +364,10 @@ fn query_one_field(h: u64, field: &str, online: bool, _units: bool) -> String {
 
 fn print_summary_table(discovered: usize) {
     let mut drv = [0i8; 64];
-    assert_eq!(nvmlSystemGetDriverVersion(drv.as_mut_ptr(), 64), NVML_SUCCESS);
+    assert_eq!(
+        nvmlSystemGetDriverVersion(drv.as_mut_ptr(), 64),
+        NVML_SUCCESS
+    );
     let mut cuda_ver = 0i32;
     let _ = nvmlSystemGetCudaDriverVersion_v2(&mut cuda_ver);
     let cuda_s = format!("{}.{}", cuda_ver / 1000, (cuda_ver % 1000) / 10);
@@ -394,8 +389,12 @@ fn print_summary_table(discovered: usize) {
     let mut count = 0u32;
     assert_eq!(nvmlDeviceGetCount_v2(&mut count), NVML_SUCCESS);
     if count == 0 {
-        println!("| No devices were found                                                         |");
-        println!("+-----------------------------------------------------------------------------+\n");
+        println!(
+            "| No devices were found                                                         |"
+        );
+        println!(
+            "+-----------------------------------------------------------------------------+\n"
+        );
         println!("Note: discovered_host_gpus={discovered} (none bound into NVML this process)");
         return;
     }

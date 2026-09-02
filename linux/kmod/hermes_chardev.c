@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 /*
  * Classic NVIDIA character device names: /dev/nvidiactl, /dev/nvidia0.
- * Open/ioctl fail-closed while GSP is Offline. Does not invent device Online.
+ * Open/ioctl remain available for status while GSP is Offline. Device
+ * operations are evidence-gated and never synthesize an Online session.
  */
 
 #include <linux/module.h>
@@ -33,7 +34,7 @@ static struct class *hermes_char_class;
 static struct cdev hermes_char_cdev;
 static DEFINE_MUTEX(hermes_char_lock);
 
-/* Sticky evidence from MEASURE_FW / APPLY_EVIDENCE (fail-closed until complete). */
+/* Sticky evidence from MEASURE_FW / APPLY_EVIDENCE until the session is complete. */
 static bool hermes_fw_admitted;
 static struct hermes_hw_evidence hermes_sticky_ev = {
 	.iommu_isolated = false,
@@ -70,7 +71,58 @@ static const struct hermes_fw_pin hermes_fw_allow[] = {
 		      0x16, 0xb5, 0x03, 0x1c, 0x39, 0x33, 0x87, 0x78, 0xc3, 0x25,
 		      0x7e, 0x48, 0xe8, 0x40, 0x8d, 0xe9, 0xa5, 0x72, 0x91, 0xb2,
 		      0x4f, 0x3a } },
+	/* 610.57.04 tu10x */
+	{ .byte_length = 29381504,
+	  .sha256 = { 0xd1, 0x57, 0xe3, 0xb7, 0xdd, 0x5d, 0xa2, 0xca, 0x8d, 0x1c,
+		      0xcb, 0x6c, 0xa9, 0x89, 0x58, 0xf9, 0xe3, 0x5d, 0x10, 0xa9,
+		      0xef, 0x73, 0x26, 0x27, 0x7e, 0xba, 0xc1, 0x33, 0xe4, 0xb0,
+		      0xd1, 0xa7 } },
+	/* 610.57.04 ga10x */
+	{ .byte_length = 84310168,
+	  .sha256 = { 0xc0, 0x15, 0x69, 0x54, 0xf3, 0xe0, 0x48, 0xd5, 0x60, 0x11,
+		      0x52, 0x4e, 0x0c, 0x2a, 0xe2, 0x88, 0x1b, 0xb6, 0xdb, 0x81,
+		      0x73, 0xb5, 0x3f, 0x9b, 0x2f, 0x4e, 0xb9, 0x41, 0x97, 0xf0,
+	 0x29, 0x99 } },
 };
+
+/*
+ * Match and remember a firmware measurement made by the in-kernel loader.
+ * Keeping this boundary in the primary module means a probe cannot advance
+ * the GSP session merely because a firmware file exists: the complete byte
+ * length and SHA-256 digest must match an embedded OpenRM pin first.
+ */
+static int __hermes_firmware_measure(u32 byte_length, const u8 *sha256)
+{
+	int admitted;
+
+	if (!sha256)
+		return -EINVAL;
+	admitted = hermes_fw_pin_match(hermes_fw_allow,
+					       ARRAY_SIZE(hermes_fw_allow),
+					       byte_length, sha256);
+	hermes_fw_admitted = admitted ? true : false;
+	hermes_sticky_ev.firmware_measured = admitted ? true : false;
+	if (!admitted)
+		hermes_gsp_set_state(false, HERMES_PHASE_OFFLINE);
+	return admitted ? 0 : -EINVAL;
+}
+
+int hermes_firmware_measure(u32 byte_length, const u8 *sha256)
+{
+	int err;
+
+	mutex_lock(&hermes_char_lock);
+	err = __hermes_firmware_measure(byte_length, sha256);
+	mutex_unlock(&hermes_char_lock);
+	return err;
+}
+EXPORT_SYMBOL_GPL(hermes_firmware_measure);
+
+bool hermes_firmware_is_admitted(void)
+{
+	return READ_ONCE(hermes_fw_admitted);
+}
+EXPORT_SYMBOL_GPL(hermes_firmware_is_admitted);
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 2, 0)
 static char *hermes_char_devnode(const struct device *dev, umode_t *mode)
@@ -229,23 +281,17 @@ static int hermes_measure_fw(struct hermes_measure_fw *m)
 
 	if (!m)
 		return -EINVAL;
-	m->admitted = hermes_fw_pin_match(hermes_fw_allow,
-					  ARRAY_SIZE(hermes_fw_allow),
-					  m->byte_length, m->sha256)
-			  ? 1
-			  : 0;
-	if (!m->admitted) {
+	err = __hermes_firmware_measure(m->byte_length, m->sha256);
+	m->admitted = (err == 0) ? 1 : 0;
+	if (err) {
 		pr_info("hermes/nvidia: MEASURE_FW reject len=%u (not in pin list)\n",
 			m->byte_length);
-		hermes_fw_admitted = false;
-		hermes_sticky_ev.firmware_measured = false;
 		m->phase = hermes_gsp_phase();
 		m->online = hermes_gsp_is_online() ? 1 : 0;
 		m->status = HERMES_BRINGUP_FIRMWARE;
-		return -EINVAL;
 	}
-	hermes_fw_admitted = true;
-	hermes_sticky_ev.firmware_measured = true;
+	if (err)
+		return err;
 	err = hermes_run_sticky_bringup(&r);
 	if (err)
 		return err;
@@ -339,7 +385,7 @@ static long hermes_char_ioctl(struct file *file, unsigned int cmd, unsigned long
 		return -ENOTTY;
 
 	mutex_lock(&hermes_char_lock);
-	/* Primary + live companions; Online remains fail-closed from GSP phase. */
+	/* Primary + live companions; Online follows the published GSP phase. */
 	mask = hermes_live_module_mask();
 	hermes_ctl_status_fill(&st, hermes_gsp_is_online() ? 1 : 0,
 			       (unsigned)hermes_gsp_phase(), mask);

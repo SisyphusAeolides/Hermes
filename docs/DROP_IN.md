@@ -23,7 +23,7 @@ cargo run -p hermes-ctl --bin hermes-ctl -- dropin-complete
 | `nvidia-peermem` | Peer memory |
 | `nvidia-settings` | GUI/CLI control |
 | `nvidia-smi` / NVML | Management queries |
-| `nvidia-modprobe` | Module/device helper (fail-closed status + load) |
+| `nvidia-modprobe` | Module/device helper (evidence-gated status + load) |
 | `nvidia-persistenced` | Persistence mode helper via NVML |
 | `libcuda.so.1` / `libcudart.so.12` | CUDA driver + runtime sonames |
 | `libGLX_nvidia` / `libEGL_nvidia` | Mesa GL/EGL sonames |
@@ -100,7 +100,7 @@ IOMMU/WPR/mailbox are incomplete (this host’s honest path).
 
 Under integration Online (`SIM_PROMOTE`), companions exercise the full software
 ioctl sets: UVM `INITIALIZE` / `PAGEABLE_MEM_ACCESS` / `REGISTER_GPU` /
-`UNREGISTER_GPU`, modeset `ALLOC` / `FLIP` / `FREE` (all fail-closed Offline).
+`UNREGISTER_GPU`, modeset `ALLOC` / `FLIP` / `FREE` (all require an Online session).
 
 ### DRM EDID via kmod
 

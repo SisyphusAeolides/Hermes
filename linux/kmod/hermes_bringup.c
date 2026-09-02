@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 /*
- * Shared fail-closed GSP bring-up for Hermes kmod surfaces.
- * Mirrors hermes_gsp::run_bringup gate order without inventing Online.
+ * Shared evidence-driven GSP bring-up for Hermes kmod surfaces.
+ * Mirrors hermes_gsp::run_bringup gate order and publishes Online only after
+ * every required hardware token has been observed.
  */
 
 #ifdef HERMES_HOST_TEST

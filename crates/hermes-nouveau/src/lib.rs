@@ -23,7 +23,5 @@ pub use firmware_manifest::{
     booter_path, required_roles, NouveauFirmwareNeed, NouveauFirmwareStyle, NouveauFwifEntry,
     NOUVEAU_BOOTER_FIRMWARE, NOUVEAU_FMC_FIRMWARE, NOUVEAU_GSP_FWIF, NOUVEAU_SIG_SECTIONS,
 };
-pub use gsp::{GspLoadPlan, GspPhase, GspSession, plan_gsp_load};
-pub use superiority::{
-    comparison_matrix, hermes_exclusive_count, Capability, HermesEdge,
-};
+pub use gsp::{plan_gsp_load, GspLoadPlan, GspPhase, GspSession};
+pub use superiority::{comparison_matrix, hermes_exclusive_count, Capability, HermesEdge};

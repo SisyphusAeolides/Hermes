@@ -61,15 +61,9 @@ impl DrmDevice {
     pub fn virtual_dual_head(gsp_online: bool) -> Self {
         let mut dev = Self {
             gsp_online,
-            connectors: alloc::vec![
-                Connector::virtual_fhd(1),
-                Connector::virtual_fhd(2),
-            ],
+            connectors: alloc::vec![Connector::virtual_fhd(1), Connector::virtual_fhd(2),],
             crtcs: alloc::vec![Crtc::new(1, 1), Crtc::new(2, 2)],
-            planes: alloc::vec![
-                Plane::primary(1, 0b01),
-                Plane::primary(2, 0b10),
-            ],
+            planes: alloc::vec![Plane::primary(1, 0b01), Plane::primary(2, 0b10),],
             framebuffers: Vec::new(),
             gems: GemManager::new(),
             vblank: VblankState::new(),
@@ -156,14 +150,7 @@ impl DrmDevice {
         bpp: u32,
     ) -> Result<DumbCreateResult, DrmError> {
         self.gems
-            .create_dumb(
-                self.gsp_online,
-                &DumbCreateRequest {
-                    width,
-                    height,
-                    bpp,
-                },
-            )
+            .create_dumb(self.gsp_online, &DumbCreateRequest { width, height, bpp })
             .map_err(DrmError::Gem)
     }
 
@@ -203,10 +190,7 @@ impl DrmDevice {
             .map_err(DrmError::Gem)
     }
 
-    pub fn gem_prime_export(
-        &mut self,
-        handle: u32,
-    ) -> Result<crate::gem::PrimeExport, DrmError> {
+    pub fn gem_prime_export(&mut self, handle: u32) -> Result<crate::gem::PrimeExport, DrmError> {
         self.gems
             .prime_export(self.gsp_online, handle)
             .map_err(DrmError::Gem)

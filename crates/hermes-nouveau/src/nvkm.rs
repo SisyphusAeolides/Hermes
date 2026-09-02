@@ -103,7 +103,7 @@ pub enum NvkmError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hermes_core::{NVIDIA_VENDOR_ID, pci_identity};
+    use hermes_core::{pci_identity, NVIDIA_VENDOR_ID};
 
     #[test]
     fn device_defaults_gsp_rm_on() {

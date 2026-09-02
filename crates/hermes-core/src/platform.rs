@@ -140,8 +140,9 @@ pub trait HermesPlatform: Sync {
     fn now_tick(&self) -> u64;
     fn relax(&self);
 
-    /// Unpredictable, phase-decorrelated backoff combining chaotic attractors.
-    /// Radically increases throughput for concurrent lockless rings by breaking phase-locks.
+    /// Deterministic, phase-decorrelated backoff combining chaotic attractors.
+    /// Increases throughput for concurrent lockless rings by breaking phase-locks;
+    /// this is not a source of cryptographic randomness.
     fn chaos_relax(&self, scheduler: &mut crate::chaos::ChaosScheduler, dt: f32) {
         let iterations = scheduler.next_interval(dt);
         for _ in 0..iterations {
