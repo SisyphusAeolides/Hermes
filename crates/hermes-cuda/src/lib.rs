@@ -1654,29 +1654,33 @@ pub extern "C" fn cuModuleLoadData(module: *mut u64, image: *const u8) -> CudaRe
     let first_byte = unsafe { *image };
     let (kind, image_bytes) = if first_byte == 0 {
         (ModuleImageKind::Unknown, &[] as &[u8])
-    } else {
+    } else if first_byte == 0x50 || first_byte == 0x7f {
+        // Fatbins begin with 0x50 0xed 0x55 0xba and cubins with ELF's
+        // 0x7f.  Only these formats have a fixed four-byte probe contract.
         let first4 = unsafe { core::slice::from_raw_parts(image, 4) };
         if u32::from_le_bytes([first4[0], first4[1], first4[2], first4[3]]) == 0xBA55_ED50
             || first4 == [0x7f, b'E', b'L', b'F']
         {
             (classify_module_image(first4), first4)
         } else {
-            let mut len = 0usize;
-            while len < 1024 * 1024 {
-                let byte = unsafe { *image.add(len) };
-                if byte == 0 {
-                    break;
-                }
-                len += 1;
+            (ModuleImageKind::Unknown, &[] as &[u8])
+        }
+    } else {
+        let mut len = 0usize;
+        while len < 1024 * 1024 {
+            let byte = unsafe { *image.add(len) };
+            if byte == 0 {
+                break;
             }
-            if len == 0 {
-                (ModuleImageKind::Unknown, &[] as &[u8])
-            } else {
-                (
-                    classify_module_image(unsafe { core::slice::from_raw_parts(image, len) }),
-                    unsafe { core::slice::from_raw_parts(image, len) },
-                )
-            }
+            len += 1;
+        }
+        if len == 0 {
+            (ModuleImageKind::Unknown, &[] as &[u8])
+        } else {
+            (
+                classify_module_image(unsafe { core::slice::from_raw_parts(image, len) }),
+                unsafe { core::slice::from_raw_parts(image, len) },
+            )
         }
     };
     with_state(|s| {
@@ -1740,12 +1744,19 @@ pub extern "C" fn cuModuleGetFunction(hfunc: *mut u64, module: u64, name: *const
             Some(m) => m,
             None => return CUDA_ERROR_INVALID_VALUE,
         };
-        let cstr = unsafe {
+        let name_bytes = unsafe {
             let mut len = 0usize;
-            while *name.add(len) != 0 && len < 256 {
+            while len < 256 && *name.add(len) != 0 {
                 len += 1;
             }
-            core::str::from_utf8_unchecked(core::slice::from_raw_parts(name, len))
+            if len == 256 {
+                return CUDA_ERROR_INVALID_VALUE;
+            }
+            core::slice::from_raw_parts(name, len)
+        };
+        let cstr = match core::str::from_utf8(name_bytes) {
+            Ok(name) if !name.is_empty() => name,
+            _ => return CUDA_ERROR_INVALID_VALUE,
         };
         if !m.functions.iter().any(|f| f == cstr) {
             return CUDA_ERROR_NOT_SUPPORTED;
