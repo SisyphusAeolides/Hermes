@@ -6,14 +6,15 @@ models, build scripts, generated interface tables, and compatibility headers.
 There are no proprietary driver sources or prebuilt driver objects in the
 repository.
 
-Hermes is a clean-room implementation informed by public Linux, Nouveau, Nova,
-and vendor documentation. Public interfaces and protocol facts may be
-reimplemented; proprietary source code is never copied into this tree.
+Hermes is an open-source implementation informed by public Linux, Nouveau,
+Nova, and vendor documentation. Public interfaces and protocol facts are
+reimplemented in independently written code; proprietary source code is never
+copied into this tree.
 
 The public reference points are the [Nouveau project](https://nouveau.freedesktop.org/)
 and the Linux [Nova DRM documentation](https://docs.kernel.org/gpu/nova/index.html).
 Hermes does not copy either project’s code; the references document the
-interfaces and architectural decisions that the clean-room implementation
+interfaces and architectural decisions that the independent implementation
 recreates.
 
 GPU firmware is a separate artifact. OpenRM/GSP, AMD PSP/SMU, and Intel GuC/HuC

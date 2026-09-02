@@ -1,4 +1,5 @@
-//! NVKM object hierarchy (clean-room): device → subdev/engine → GSP.
+//! NVKM object hierarchy implemented from public interfaces: device →
+//! subdev/engine → GSP.
 //!
 //! Mirrors Nouveau's layering without importing GPL DRM core.
 

@@ -1,4 +1,4 @@
-//! Clean-room reverse engineering of Nouveau's NVKM GSP path into Hermes.
+//! Independent open-source implementation of Nouveau's NVKM GSP path in Hermes.
 //!
 //! Source of architectural truth:
 //! - Linux `drivers/gpu/drm/nouveau/nvkm/subdev/gsp` (MIT-licensed GSP core)

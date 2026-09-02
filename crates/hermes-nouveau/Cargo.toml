@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Clean-room Nouveau NVKM/GSP architecture port for Hermes (MIT Nouveau GSP + Hermes gates)"
+description = "Open-source Nouveau NVKM/GSP architecture port for Hermes (MIT Nouveau GSP + Hermes gates)"
 authors.workspace = true
 repository.workspace = true
 

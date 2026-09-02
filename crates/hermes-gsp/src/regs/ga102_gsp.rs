@@ -1,6 +1,6 @@
 //! GSP register map reverse-engineered from MIT-licensed OpenRM published headers.
 //! Source note: swref/published/ampere/ga102/dev_gsp.h
-//! Clean-room Rust constants (not a verbatim dump of proprietary code).
+//! Independently written Rust constants (not a verbatim dump of proprietary code).
 
 #![allow(non_upper_case_globals)]
 #![allow(dead_code)]

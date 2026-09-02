@@ -1,4 +1,4 @@
-/* Shared Hermes kmod API — clean-room, evidence-driven GSP bring-up. */
+/* Shared Hermes kmod API — open-source, evidence-driven GSP bring-up. */
 #ifndef HERMES_KMOD_H
 #define HERMES_KMOD_H
 

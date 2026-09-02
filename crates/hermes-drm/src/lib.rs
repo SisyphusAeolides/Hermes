@@ -1,4 +1,4 @@
-//! DRM/KMS atomic modeset foundation (clean-room, Nouveau-shaped).
+//! DRM/KMS atomic modeset foundation (open-source, Nouveau-shaped).
 //!
 //! Display commits require Hermes GSP Online. The in-tree modeset state
 //! machine is exported through the `nvidia-drm` compatibility surface.

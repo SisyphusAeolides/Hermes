@@ -418,7 +418,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_descriptor_fails_closed() {
+    fn empty_descriptor_is_rejected() {
         assert!(!HermesPersonalityDescriptor::empty().is_structurally_complete());
     }
 

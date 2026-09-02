@@ -1,4 +1,4 @@
-! Nouveau-shaped GSP firmware bundle (clean-room exclusive handles).
+! Nouveau-shaped GSP firmware bundle (open-source exclusive handles).
 module hermes_nvkm_gsp
   use hermes_kinds, only: i32
   use hermes_resources, only: handle_t, handle_is_live

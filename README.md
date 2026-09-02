@@ -1,7 +1,7 @@
 # Hermes GSP
 
-**Hermes** is a clean-room, hardware-qualified, universal **GPU System Processor (GSP) and Firmware Host** for **NVIDIA, AMD, and Intel** GPUs.
-Originally built to be a strict drop-in replacement for the proprietary NVIDIA Linux stack (`nvidia`, `nvidia-modeset`, `nvidia-uvm`, `nvidia-smi` / NVML), Hermes has evolved into a mathematically verified, multi-vendor GPU hypervisor and host layer.
+**Hermes** is an open-source, hardware-qualified, universal **GPU System Processor (GSP) and Firmware Host** for **NVIDIA, AMD, and Intel** GPUs.
+Originally built to be a strict drop-in replacement for the NVIDIA Linux stack (`nvidia`, `nvidia-modeset`, `nvidia-uvm`, `nvidia-smi` / NVML), Hermes has evolved into a mathematically verified, multi-vendor GPU hypervisor and host layer.
 
 Hermes intentionally **breaks the rules** of traditional OS scheduling. By replacing standard locks and exponential backoff with **continuous and discrete deterministic chaos** (Lorenz, Rössler, Logistic Map, Duffing), Hermes prevents atomic phase-locking and delivers staggering zero-copy ring throughput (12+ Million ops/sec) that radically outperforms proprietary driver stacks.
 
@@ -196,4 +196,7 @@ See [formal/LANGUAGES.md](formal/LANGUAGES.md).
 
 ## License
 
-MIT. Clean-room implementation. Do not paste proprietary sources into this tree. Redistributable firmware remains subject to the vendor's firmware license and is staged by the operator, not shipped in git.
+MIT. Fully open-source implementation. The code reimplements documented public
+interfaces and does not include proprietary source. Redistributable firmware
+remains subject to the vendor's firmware license and is staged by the operator,
+not shipped in git.

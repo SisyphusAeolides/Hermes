@@ -62,7 +62,7 @@ int main(void)
 	assert(hermes_drm_logic_disable(&L, 1) == HERMES_DRM_OK);
 	assert(L.active_crtcs == 0);
 
-	/* EDID offline fails closed */
+	/* EDID is unavailable while the GSP is offline. */
 	{
 		struct hermes_drm_edid edid;
 		struct hermes_drm_prop_get prop;
