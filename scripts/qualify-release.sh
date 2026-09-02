@@ -15,6 +15,11 @@ REPORT=${HERMES_RELEASE_MANIFEST:-$OUT/release-manifest.txt}
 TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/hermes-qualification.XXXXXX")
 trap 'rm -rf -- "$TMP_DIR"' EXIT
 
+# ArachOS calls this script from its own checkout. Every gate must execute
+# against Hermes' workspace, otherwise Cargo could qualify whichever
+# repository happened to be the caller's current directory.
+cd "$ROOT"
+
 mkdir -p "$LOG_DIR"
 
 overall=pass
