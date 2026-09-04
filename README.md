@@ -103,7 +103,7 @@ simulation promotion is not a release qualification.
 
 ## ArachOS integration
 
-Hermes is packaged as `hermes-gpu-stack` for ArachOS, the independent RPM/DNF
+Hermes is packaged as `hermes-gpu-stack` for ArachOS, the ArchISO-based
 distribution that carries this checkout alongside RustD, RustD-resolved, and
 the ArachOS kernel qualification path. The package provides the Hermes
 control tools, the NVIDIA-compatible library names, the Vulkan/EGL registration
@@ -114,19 +114,19 @@ Hermes unit with `rustctl`; Hermes does not require `systemctl` to start or
 manage its service:
 
 ```sh
-sudo dnf install hermes-gpu-stack
+sudo pacman -S hermes-gpu-stack
 sudo rustctl enable hermes-gpu.service
 hermes-ctl kmod-status
 hermes-ctl dropin-catalog
 ```
 
-Build and validate the ArachOS RPM repository from the coordinated checkouts:
+Build and validate the ArachOS pacman repository from the coordinated checkouts:
 
 ```sh
 cd ~/Projects/ArachOS
 make verify-sources
-make build-rpms
-make validate-rpms
+make build-packages
+make validate-packages
 ```
 
 The ArachOS package carries the source needed to build Hermes' out-of-tree
