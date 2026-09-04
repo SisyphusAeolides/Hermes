@@ -86,11 +86,35 @@ fi
 # Build both the loadable modules and their host-only C tests.  The clean is
 # scoped to this kmod tree so a failed qualification cannot accumulate stale
 # module objects, while the Rust target directory remains reusable.
+KMOD_CC=${HERMES_KMOD_CC:-}
+KMOD_LD=${HERMES_KMOD_LD:-}
+if [[ -z "$KMOD_CC" ]]; then
+    kernel_build="/lib/modules/$(uname -r)/build"
+    if [[ -r "$kernel_build/.config" ]] &&
+        grep -q '^CONFIG_CC_IS_CLANG=y' "$kernel_build/.config"; then
+        KMOD_CC=clang
+    else
+        KMOD_CC=gcc
+    fi
+fi
+if [[ -z "$KMOD_LD" ]]; then
+    kernel_build="/lib/modules/$(uname -r)/build"
+    if [[ -r "$kernel_build/.config" ]] &&
+        grep -q '^CONFIG_LD_IS_LLD=y' "$kernel_build/.config"; then
+        KMOD_LD=ld.lld
+    else
+        KMOD_LD=ld
+    fi
+fi
+export HERMES_KMOD_CC="$KMOD_CC"
+export HERMES_KMOD_LD="$KMOD_LD"
 run_gate kmod_build bash -c '
     set -euo pipefail
+    printf "kernel-module compiler: %s\\n" "$HERMES_KMOD_CC"
+    printf "kernel-module linker: %s\\n" "$HERMES_KMOD_LD"
     make -C "$1/linux/kmod" clean
-    make -C "$1/linux/kmod" CC=gcc all
-    make -C "$1/linux/kmod" host-test
+    make -C "$1/linux/kmod" CC="$HERMES_KMOD_CC" LD="$HERMES_KMOD_LD" all
+    make -C "$1/linux/kmod" CC="$HERMES_KMOD_CC" host-test
 ' bash "$ROOT"
 
 # These markers identify code paths that are still compatibility shells rather
