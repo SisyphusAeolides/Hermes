@@ -12,7 +12,7 @@ agda_version = "2.8.0"
 agda_linux_sha256 = "824081b8dcbe431289a50ac6bd83e451f390c51c3884ac7a8c4a5c0df2632faf"
 
 # Fortran: exclusive-handle resource models for GSP domains, rings, sessions.
-# Compiler: gfortran (GCC). Fedora package: gcc-gfortran.
+# Compiler: gfortran (GCC), installed from the Arch toolchain.
 fortran_standard = "f2018"
 gfortran_min_version = "13"
 fortran_modules = [

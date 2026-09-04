@@ -99,7 +99,7 @@ else
   n=$(find "$ROOT/formal/fortran" -name '*.f90' 2>/dev/null | wc -l | tr -d ' ')
   lines=$(find "$ROOT/formal/fortran" -type f -name '*.f90' -print0 2>/dev/null | xargs -0 cat 2>/dev/null | wc -l | tr -d ' ')
   printf 'note: gfortran not installed; %s modules / %s lines under formal/fortran/\n' "$n" "$lines"
-  printf '      install gcc-gfortran (Fedora) or gfortran, then re-run with --strict\n'
+  printf '      install agda, Idris2, and gfortran from the Arch repositories, then re-run with --strict\n'
 fi
 
 if [ "$checked" -eq 0 ]; then
