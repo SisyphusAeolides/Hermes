@@ -16,3 +16,8 @@ Pinned versions live in `toolchains.lock`. Check with:
 sh scripts/check-formal.sh
 sh scripts/check-formal.sh --strict   # requires idris2, agda, and gfortran
 ```
+
+Idris2 is built from the pinned upstream source revision in
+`toolchains.lock`; no distro or AUR Idris2 package is required.  A local
+installation under `~/.local` is picked up automatically when that directory
+is on `PATH`.

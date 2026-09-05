@@ -1,5 +1,7 @@
 #!/usr/bin/env sh
 # Typecheck Hermes formal models (Idris2, Agda, Fortran).
+# Idris2 is built from https://github.com/idris-lang/Idris2 and is normally
+# available as ~/.local/bin/idris2 or another explicit IDRIS2 path.
 # Default: run every available compiler, skip missing ones with a notice.
 # --strict: fail if any of idris2, agda, or gfortran is missing.
 
@@ -121,7 +123,7 @@ else
   n=$(find "$ROOT/formal/fortran" -name '*.f90' 2>/dev/null | wc -l | tr -d ' ')
   lines=$(find "$ROOT/formal/fortran" -type f -name '*.f90' -print0 2>/dev/null | xargs -0 cat 2>/dev/null | wc -l | tr -d ' ')
   printf 'note: gfortran not installed; %s modules / %s lines under formal/fortran/\n' "$n" "$lines"
-  printf '      install agda, Idris2, and gfortran from the Arch repositories, then re-run with --strict\n'
+  printf '      install Agda and gfortran from Arch, then build Idris2 from the upstream repository and re-run with --strict\n'
 fi
 
 if [ "$checked" -eq 0 ]; then
