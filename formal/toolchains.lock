@@ -1,0 +1,33 @@
+format = 1
+
+# Hermes formal language pins.
+# Runtime crates live outside this lock (Rust).
+# Formal set: Idris2 + Agda + Fortran (gfortran).
+
+idris2_version = "0.8.0"
+idris2_commit = "5aaefadb587224eb44d3be0fbb7e2835b48bd7a6"
+idris2_source_sha256 = "b05e982313b7532be84f0482b808f222a2c5065a50d896690cce8f11a738753c"
+
+agda_version = "2.8.0"
+agda_linux_sha256 = "824081b8dcbe431289a50ac6bd83e451f390c51c3884ac7a8c4a5c0df2632faf"
+
+# Fortran: exclusive-handle resource models for GSP domains, rings, sessions.
+# Compiler: gfortran (GCC), installed from the Arch toolchain.
+fortran_standard = "f2018"
+gfortran_min_version = "13"
+fortran_modules = [
+  "hermes_kinds",
+  "hermes_resources",
+  "hermes_rings",
+  "hermes_lifecycle",
+  "hermes_wpr",
+  "hermes_bootstrap",
+  "hermes_firmware",
+  "hermes_mailbox",
+  "hermes_host_gate",
+  "hermes_dropin",
+  "hermes_drm_kms",
+  "hermes_cccl",
+  "hermes_nvkm_gsp",
+  "hermes_check",
+]

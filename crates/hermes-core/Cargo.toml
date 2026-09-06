@@ -1,0 +1,18 @@
+[package]
+name = "hermes-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Kernel-portable Hermes GSP admission, phase manifold, and platform HAL"
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+hermes-abi = { workspace = true }
+
+[features]
+default = []

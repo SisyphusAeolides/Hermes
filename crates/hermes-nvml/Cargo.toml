@@ -1,0 +1,19 @@
+[package]
+name = "hermes-nvml"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "NVML-compatible library surface backed by Hermes admission state"
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "nvidia_ml"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+hermes-core = { workspace = true }
+hermes-gsp = { workspace = true }
+hermes-linux = { workspace = true }

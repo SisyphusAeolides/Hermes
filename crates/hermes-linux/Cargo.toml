@@ -1,0 +1,17 @@
+[package]
+name = "hermes-linux"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Linux drop-in personality surfaces for the NVIDIA kernel module set"
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+hermes-abi = { workspace = true }
+hermes-core = { workspace = true }
+hermes-gsp = { workspace = true }

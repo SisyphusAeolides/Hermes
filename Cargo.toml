@@ -1,0 +1,58 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/hermes-abi",
+    "crates/hermes-core",
+    "crates/hermes-gsp",
+    "crates/hermes-linux",
+    "crates/hermes-settings",
+    "crates/hermes-nvml",
+    "crates/hermes-ctl",
+    "crates/hermes-nouveau",
+    "crates/hermes-cccl",
+    "crates/hermes-cuda",
+    "crates/hermes-drm",
+    "crates/hermes-mesa",
+]
+default-members = [
+    "crates/hermes-abi",
+    "crates/hermes-core",
+    "crates/hermes-gsp",
+    "crates/hermes-linux",
+    "crates/hermes-settings",
+    "crates/hermes-nvml",
+    "crates/hermes-ctl",
+    "crates/hermes-nouveau",
+    "crates/hermes-cccl",
+    "crates/hermes-cuda",
+    "crates/hermes-drm",
+    "crates/hermes-mesa",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.85"
+authors = ["SisyphusAeolides <SisyphusAeolides@pm.me>"]
+repository = "https://github.com/SisyphusAeolides/Hermes"
+
+[workspace.dependencies]
+hermes-abi = { path = "crates/hermes-abi" }
+hermes-core = { path = "crates/hermes-core" }
+hermes-gsp = { path = "crates/hermes-gsp" }
+hermes-linux = { path = "crates/hermes-linux" }
+hermes-nouveau = { path = "crates/hermes-nouveau" }
+hermes-cccl = { path = "crates/hermes-cccl" }
+hermes-cuda = { path = "crates/hermes-cuda" }
+hermes-drm = { path = "crates/hermes-drm" }
+hermes-mesa = { path = "crates/hermes-mesa" }
+sha2 = { version = "0.10", default-features = false }
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
