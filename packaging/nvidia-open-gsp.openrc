@@ -1,0 +1,76 @@
+#!/sbin/openrc-run
+
+name="nvidia-open-gsp"
+description="Load the NVIDIA open kernel GSP backend for Hermes hardware"
+
+depend() {
+	need localmount
+	after modules
+	before gdm
+}
+
+module_dir="/usr/lib/hermes/nvidia-open"
+
+ensure_nvidia_nodes() {
+	local major uvm_major
+	major=$(awk '$2 == "nvidia" { print $1; exit }' /proc/devices)
+	[ -n "$major" ] || return 0
+	[ -e /dev/nvidiactl ] || mknod /dev/nvidiactl c "$major" 255
+	[ -e /dev/nvidia0 ] || mknod /dev/nvidia0 c "$major" 0
+	chown root:video /dev/nvidiactl /dev/nvidia0 2>/dev/null || true
+	chmod 0660 /dev/nvidiactl /dev/nvidia0 2>/dev/null || true
+
+	uvm_major=$(awk '$2 == "nvidia-uvm" { print $1; exit }' /proc/devices)
+	if [ -n "$uvm_major" ]; then
+		[ -e /dev/nvidia-uvm ] || mknod /dev/nvidia-uvm c "$uvm_major" 0
+		[ -e /dev/nvidia-uvm-tools ] || mknod /dev/nvidia-uvm-tools c "$uvm_major" 1
+		chown root:video /dev/nvidia-uvm /dev/nvidia-uvm-tools 2>/dev/null || true
+		chmod 0660 /dev/nvidia-uvm /dev/nvidia-uvm-tools 2>/dev/null || true
+	fi
+}
+
+start() {
+	local release path
+	release=$(uname -r)
+	path="${module_dir}/${release}"
+
+	if [ ! -r "${path}/nvidia.ko" ]; then
+		eerror "NVIDIA open GSP module is missing: ${path}/nvidia.ko"
+		return 1
+	fi
+
+	ebegin "Loading NVIDIA open GSP backend"
+	modprobe -q ecc || true
+	modprobe nvidia NVreg_EnableGpuFirmware=1 || {
+		eend 1
+		return 1
+	}
+	modprobe nvidia_modeset || {
+		eend 1
+		return 1
+	}
+	modprobe nvidia_uvm || {
+		eend 1
+		return 1
+	}
+	modprobe drm_ttm_helper || true
+	modprobe nvidia_drm modeset=1 fbdev=1 || {
+		eend 1
+		return 1
+	}
+	if ! modprobe nvidia_peermem; then
+		printf '%s\n' 'nvidia-peermem unavailable; continuing with GSP' >&2
+	fi
+	ensure_nvidia_nodes
+	eend 0
+}
+
+stop() {
+	ebegin "Unloading NVIDIA open GSP backend"
+	rmmod nvidia_peermem 2>/dev/null || true
+	rmmod nvidia_drm 2>/dev/null || true
+	rmmod nvidia_uvm 2>/dev/null || true
+	rmmod nvidia_modeset 2>/dev/null || true
+	rmmod nvidia 2>/dev/null || true
+	eend 0
+}

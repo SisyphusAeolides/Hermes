@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hermes GPU Settings</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #15151b;
+      --panel: #202027;
+      --panel-alt: #292933;
+      --text: #f5f5f5;
+      --muted: #b8b8c2;
+      --blue: #3584e4;
+      --purple: #9141ac;
+      --green: #33d17a;
+      --yellow: #f6d32d;
+      --red: #ed333b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      background: radial-gradient(circle at top right, #30304a 0, var(--bg) 42rem);
+      color: var(--text);
+      font: 15px/1.5 "JetBrains Mono", "JetBrainsMono Nerd Font Mono", monospace;
+    }
+    main { width: min(1100px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0 48px; }
+    header { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
+    h1, h2, p { margin: 0; }
+    h1 { color: var(--blue); font-size: clamp(24px, 5vw, 42px); letter-spacing: -0.05em; }
+    h2 { font-size: 16px; color: var(--muted); margin-bottom: 14px; }
+    .eyebrow { color: var(--purple); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+    .card { background: color-mix(in srgb, var(--panel) 94%, transparent); border: 1px solid #3c3c49; border-radius: 14px; padding: 20px; box-shadow: 0 16px 40px #0004; }
+    .wide { grid-column: 1 / -1; }
+    .metric { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 10px 0; border-top: 1px solid #3c3c49; }
+    .metric:first-of-type { border-top: 0; }
+    .value { color: var(--green); font-weight: 700; text-align: right; }
+    .offline { color: var(--yellow); }
+    .profile-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+    .profile-card { background: var(--panel-alt); border: 1px solid #454553; border-radius: 10px; padding: 14px; }
+    .profile-card.active { border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue); }
+    .profile-card h3 { margin: 0 0 6px; color: var(--blue); font-size: 16px; }
+    .profile-card p { min-height: 48px; color: var(--muted); font-size: 13px; }
+    .profile-card button { width: 100%; margin-top: 12px; }
+    button:disabled { cursor: wait; opacity: .65; }
+    pre { margin: 0; padding: 14px; overflow: auto; max-height: 340px; background: #111116; border-radius: 9px; color: #d7d7e0; white-space: pre-wrap; }
+    button { border: 0; border-radius: 8px; padding: 10px 16px; background: var(--blue); color: white; font: inherit; cursor: pointer; }
+    button:hover { filter: brightness(1.15); }
+    .note { color: var(--muted); margin-top: 14px; }
+    .error { color: var(--red); }
+    @media (max-width: 650px) { header { align-items: start; flex-direction: column; } main { width: min(100% - 20px, 1100px); padding-top: 20px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">Hermes open GPU host</p>
+        <h1>GPU Settings</h1>
+      </div>
+      <button id="refresh" type="button">Refresh status</button>
+    </header>
+
+    <section class="grid">
+      <article class="card">
+        <h2>Host graphics</h2>
+        <div class="metric"><span>DRM and Mesa</span><strong class="value" id="host">Loading</strong></div>
+        <div class="metric"><span>NVIDIA GPU</span><strong class="value" id="gpu">Loading</strong></div>
+        <div class="metric"><span>Kernel GSP</span><strong class="value" id="phase">Loading</strong></div>
+        <div class="metric"><span>Hermes NVML backend</span><strong class="value" id="nvml">Loading</strong></div>
+        <p class="note">Intel/i915 drives the connected laptop panel. The NVIDIA Quadro T1000 remains available through the normal hybrid PRIME offload path.</p>
+      </article>
+
+      <article class="card">
+        <h2>System power profile</h2>
+        <div class="metric"><span>TuneD active profile</span><strong class="value" id="power">Loading</strong></div>
+        <p class="note">Use TuneD Control Center for profile changes and CPU or network tuning.</p>
+      </article>
+
+      <article class="card wide">
+        <h2>Hermes profiles</h2>
+        <div class="profile-grid" id="profiles"><p class="note">Loading profiles…</p></div>
+        <p class="note" id="profile-message">Profiles apply vendor-neutral TuneD system policy. GPU-specific controls appear only when an Online backend is admitted.</p>
+      </article>
+
+      <article class="card wide">
+        <h2>Graphics status</h2>
+        <pre id="graphics">Loading…</pre>
+      </article>
+
+      <article class="card wide">
+        <h2>Hermes settings surface</h2>
+        <pre id="settings">Loading…</pre>
+        <p class="note" id="message">Reading the live NVIDIA driver and Hermes host state.</p>
+      </article>
+    </section>
+  </main>
+
+  <script>
+    const token = new URLSearchParams(location.search).get("token") || "";
+    const field = id => document.getElementById(id);
+    const firstMatch = (text, expression, fallback) => {
+      const match = text.match(expression);
+      return match ? match[1] : fallback;
+    };
+
+    function renderProfiles(profiles, active) {
+      const container = field("profiles");
+      container.replaceChildren();
+      for (const profile of profiles || []) {
+        const card = document.createElement("div");
+        card.className = `profile-card${profile.tuned_profile === active ? " active" : ""}`;
+        const title = document.createElement("h3");
+        title.textContent = profile.name;
+        const description = document.createElement("p");
+        description.textContent = profile.description;
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = profile.tuned_profile === active ? "Active" : "Apply";
+        button.disabled = profile.tuned_profile === active;
+        button.addEventListener("click", () => applyProfile(profile.id, profile.name, button));
+        card.append(title, description, button);
+        container.append(card);
+      }
+    }
+
+    async function applyProfile(id, name, button) {
+      const message = field("profile-message");
+      button.disabled = true;
+      message.textContent = `Applying ${name}…`;
+      try {
+        const response = await fetch(`/api/profile?token=${encodeURIComponent(token)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ profile: id }),
+        });
+        const result = await response.json();
+        if (!response.ok || result.ok === false) throw new Error(result.message || "Profile change failed");
+        message.textContent = result.message;
+        await refresh();
+      } catch (error) {
+        message.textContent = `Profile change failed: ${error}`;
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function refresh() {
+      field("message").textContent = "Reading the live host state…";
+      try {
+        const response = await fetch(`/api/status?token=${encodeURIComponent(token)}`, { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const state = await response.json();
+        const graphics = state.graphics || "";
+        const settings = state.settings || "";
+        const power = state.power || "";
+        const gpu = firstMatch(settings, /^\s*GPU \d+:\s*(.*?)\s+\(/m, "Not detected");
+        const kernelGsp = firstMatch(settings, /Kernel GSP:\s+(ONLINE|OFFLINE)/, "UNKNOWN");
+        const nvmlPhase = firstMatch(settings, /hermes_nvml_phase\[0\]=([^\s]+)/, "UNKNOWN");
+        field("graphics").textContent = graphics;
+        field("settings").textContent = settings;
+        field("host").textContent = graphics.includes("graphics_host: pass") ? "PASS" : "CHECK";
+        field("gpu").textContent = gpu;
+        field("phase").textContent = kernelGsp;
+        field("nvml").textContent = kernelGsp === "ONLINE" && nvmlPhase === "UNCLAIMED" ? "HOST GSP ONLINE" : nvmlPhase;
+        field("power").textContent = state.active_profile || firstMatch(power, /Current active profile:\s*(.+)/, power || "UNKNOWN");
+        renderProfiles(state.profiles, state.active_profile);
+        field("phase").classList.toggle("offline", kernelGsp !== "ONLINE");
+        field("nvml").classList.toggle("offline", false);
+        field("message").textContent = kernelGsp === "ONLINE"
+          ? `${gpu} GSP-RM is ONLINE in the NVIDIA kernel driver. Hermes reports that physical state separately from its own optional NVML control backend.`
+          : "The NVIDIA kernel driver is not reporting a live GSP firmware state.";
+      } catch (error) {
+        field("message").textContent = `Status read failed: ${error}`;
+        field("message").className = "note error";
+      }
+    }
+
+    field("refresh").addEventListener("click", refresh);
+    refresh();
+  </script>
+</body>
+</html>

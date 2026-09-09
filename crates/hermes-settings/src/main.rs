@@ -11,10 +11,11 @@ use hermes_gsp::{firmware_family_for_device, FirmwareFamily, NVIDIA_GSP_RM_610_5
 use hermes_linux::{devices, drop_in_module_name, modules, userspace, MODULE_SURFACES};
 use nvidia_ml::{
     hermes_nvml_brand_name, hermes_nvml_discover_host_gpus, hermes_nvml_format_device_line,
-    hermes_nvml_gpu_count, hermes_nvml_gpu_phase, hermes_nvml_promote_first_sim_online,
-    hermes_nvml_reset, nvmlDeviceGetBrand, nvmlDeviceGetCount_v2, nvmlDeviceGetHandleByIndex_v2,
-    nvmlDeviceGetMemoryInfo, nvmlDeviceGetName, nvmlDeviceGetPCIBusId, nvmlInit_v2, nvmlShutdown,
-    NvmlMemory_t, NVML_SUCCESS,
+    hermes_nvml_gpu_count, hermes_nvml_gpu_phase, hermes_nvml_host_gsp_status,
+    hermes_nvml_promote_first_sim_online, hermes_nvml_reset, nvmlDeviceGetBrand,
+    nvmlDeviceGetCount_v2, nvmlDeviceGetHandleByIndex_v2, nvmlDeviceGetMemoryInfo,
+    nvmlDeviceGetName, nvmlDeviceGetPCIBusId, nvmlInit_v2, nvmlShutdown, NvmlMemory_t,
+    NVML_SUCCESS,
 };
 
 fn main() {
@@ -96,6 +97,25 @@ fn status(sim_online: bool) {
         "Firmware pin: 610.57.04 ({} manifests)",
         NVIDIA_GSP_RM_610_57_04.len()
     );
+    let host_gsp = hermes_nvml_host_gsp_status();
+    if host_gsp.is_empty() {
+        println!("Kernel GSP: OFFLINE (no bound NVIDIA GPU reports firmware)");
+    } else {
+        for gpu in &host_gsp {
+            println!(
+                "Kernel GSP: ONLINE bus={} firmware={} driver={}",
+                gpu.bus_id, gpu.firmware_version, gpu.driver_version
+            );
+            println!(
+                "Kernel module flavor: {}",
+                if gpu.open_kernel_module {
+                    "open"
+                } else {
+                    "proprietary"
+                }
+            );
+        }
+    }
     with_nvml_session(sim_online, || {
         let mut count = 0u32;
         assert_eq!(nvmlDeviceGetCount_v2(&mut count), NVML_SUCCESS);
@@ -105,12 +125,27 @@ fn status(sim_online: bool) {
                 println!("  {line}");
             }
             let phase = hermes_nvml_gpu_phase(i as usize).unwrap_or(HermesPhase::Offline);
-            println!("  phase[{i}]={}", phase.label());
+            let host_gsp_online = hermes_nvml_host_gsp_status().iter().any(|status| {
+                line_bus_id(i as usize).is_some_and(|bus_id| status.bus_id == bus_id)
+            });
+            if host_gsp_online && phase == HermesPhase::Offline {
+                println!("  hermes_nvml_phase[{i}]=UNCLAIMED");
+            } else {
+                println!("  hermes_nvml_phase[{i}]={}", phase.label());
+            }
         }
         if count == 0 {
             println!("  (no host Turing+ display GPUs discovered)");
         }
     });
+}
+
+fn line_bus_id(index: usize) -> Option<String> {
+    let mut handle = 0u64;
+    (nvmlDeviceGetHandleByIndex_v2(index as u32, &mut handle) == NVML_SUCCESS).then(|| {
+        let mut bus = [0i8; 32];
+        (nvmlDeviceGetPCIBusId(handle, bus.as_mut_ptr(), 32) == NVML_SUCCESS).then(|| cstr(&bus))
+    })?
 }
 
 fn query(attr: &str, sim_online: bool) {

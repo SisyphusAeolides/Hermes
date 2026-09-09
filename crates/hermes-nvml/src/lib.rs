@@ -142,11 +142,15 @@ fn architecture_name(device_id: u16) -> &'static str {
 }
 
 fn default_name_for_device(device_id: u16) -> String {
-    format!(
-        "NVIDIA {} [{:04x}]",
-        architecture_name(device_id),
-        device_id
-    )
+    match device_id {
+        // Quadro T1000 mobile/workstation adapter used by the host.
+        0x1fb9 => "NVIDIA Quadro T1000".to_owned(),
+        _ => format!(
+            "NVIDIA {} [{:04x}]",
+            architecture_name(device_id),
+            device_id
+        ),
+    }
 }
 
 fn uuid_for(bus: &str, device_id: u16) -> String {
@@ -163,6 +167,74 @@ fn compute_caps(device_id: u16) -> (u32, u32) {
         Some(a) if a.as_str() == "Blackwell" => (10, 0),
         _ => (7, 5),
     }
+}
+
+/// Kernel-owned GSP evidence exposed by the official NVIDIA driver.
+///
+/// This is deliberately separate from Hermes' own manifold: the NVIDIA open
+/// kernel module is the component that boots GSP-RM, while Hermes reports the
+/// result without minting an unrelated certificate or simulation state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HostGspStatus {
+    pub bus_id: String,
+    pub firmware_version: String,
+    pub driver_version: String,
+    pub open_kernel_module: bool,
+}
+
+fn information_field(text: &str, key: &str) -> Option<String> {
+    text.lines()
+        .find_map(|line| line.strip_prefix(key))
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("N/A"))
+        .map(str::to_owned)
+}
+
+/// Read the authoritative per-GPU GSP field published by the live NVIDIA
+/// kernel driver. A version is accepted only when the driver is bound to the
+/// corresponding PCI function and `/proc` reports a non-N/A firmware value.
+pub fn hermes_nvml_host_gsp_status() -> Vec<HostGspStatus> {
+    let root = Path::new("/proc/driver/nvidia/gpus");
+    let driver_version = read_trim(Path::new("/proc/driver/nvidia/version"))
+        .unwrap_or_else(|| "unavailable".to_string());
+    let open_kernel_module = driver_version.contains("Open Kernel Module");
+    let mut statuses = Vec::new();
+    let Ok(entries) = fs::read_dir(root) else {
+        return statuses;
+    };
+    for entry in entries.flatten() {
+        let bus_id = entry.file_name().to_string_lossy().into_owned();
+        let information_path = entry.path().join("information");
+        let Some(information) = fs::read_to_string(&information_path).ok() else {
+            continue;
+        };
+        let Some(reported_bus) = information_field(&information, "Bus Location:") else {
+            continue;
+        };
+        let Some(firmware_version) = information_field(&information, "GPU Firmware:") else {
+            continue;
+        };
+        if reported_bus != bus_id {
+            continue;
+        }
+        let driver_link = Path::new("/sys/bus/pci/devices")
+            .join(&bus_id)
+            .join("driver");
+        let driver_is_bound = fs::read_link(driver_link)
+            .ok()
+            .and_then(|link| link.file_name().map(|name| name == "nvidia"))
+            .unwrap_or(false);
+        if driver_is_bound {
+            statuses.push(HostGspStatus {
+                bus_id,
+                firmware_version,
+                driver_version: driver_version.clone(),
+                open_kernel_module,
+            });
+        }
+    }
+    statuses.sort_by(|a, b| a.bus_id.cmp(&b.bus_id));
+    statuses
 }
 
 /// Scan `/sys/bus/pci/devices` for NVIDIA display Turing+ and bind Offline slots.
@@ -1725,12 +1797,25 @@ pub extern "C" fn nvmlDeviceGetComputeRunningProcesses_v2(
 pub fn hermes_nvml_format_device_line(index: usize) -> Option<String> {
     with_state(|s| {
         let g = s.gpus.get(index)?;
-        let phase = g.manifold.phase.label();
+        let kernel_gsp_online = hermes_nvml_host_gsp_status()
+            .iter()
+            .any(|status| status.bus_id == g.pci_bus_id);
+        let phase = if kernel_gsp_online && g.manifold.phase == HermesPhase::Offline {
+            "HOST-GSP-ONLINE"
+        } else {
+            g.manifold.phase.label()
+        };
+        let backend = if kernel_gsp_online && g.manifold.phase == HermesPhase::Offline {
+            "UNCLAIMED"
+        } else {
+            g.manifold.phase.label()
+        };
         Some(format!(
-            "GPU {index}: {} ({}) phase={} mem={} MiB",
+            "GPU {index}: {} ({}) phase={} hermes_backend={} mem={} MiB",
             g.name,
             g.pci_bus_id,
             phase,
+            backend,
             g.total_mem_bytes / (1024 * 1024)
         ))
     })

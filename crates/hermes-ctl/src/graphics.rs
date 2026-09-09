@@ -10,6 +10,8 @@ use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use nvidia_ml::hermes_nvml_host_gsp_status;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GraphicsVendor {
     Nvidia,
@@ -410,12 +412,29 @@ pub fn print_report(report: &GraphicsReport) {
         "mesa: {}",
         if report.mesa_ready() { "pass" } else { "fail" }
     );
-    println!("gsp_online: not-claimed");
+    let gsp_status = hermes_nvml_host_gsp_status();
+    if gsp_status.is_empty() {
+        println!("gsp_online: offline");
+    } else {
+        for status in gsp_status {
+            println!(
+                "gsp_online: pass bus={} firmware={} flavor={}",
+                status.bus_id,
+                status.firmware_version,
+                if status.open_kernel_module {
+                    "open"
+                } else {
+                    "proprietary"
+                }
+            );
+        }
+    }
 }
 
 pub fn status(report_path: Option<&Path>) -> i32 {
     let report = probe_host();
     print_report(&report);
+    let gsp_online = !hermes_nvml_host_gsp_status().is_empty();
     if let Some(path) = report_path {
         if let Err(error) = report.write_qualification(path) {
             eprintln!("graphics report: cannot write {}: {error}", path.display());
@@ -424,7 +443,11 @@ pub fn status(report_path: Option<&Path>) -> i32 {
         println!("qualification_report: {}", path.display());
     }
     if report.graphics_host_ready() && report.drm_kms_ready() && report.mesa_ready() {
-        println!("PASS (host graphics path qualified; GSP/CUDA remain explicitly untested)");
+        if gsp_online {
+            println!("PASS (host graphics path qualified; physical NVIDIA GSP is online; Hermes CUDA/NVML telemetry remains a separate backend)");
+        } else {
+            println!("PASS (host graphics path qualified; physical NVIDIA GSP was not detected)");
+        }
         0
     } else {
         println!("BLOCKED (host graphics path is incomplete)");

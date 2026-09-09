@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Hermes GPU Settings
+Comment=Inspect Hermes multi-vendor GPU, DRM, Mesa, and GSP state
+Exec=hermes-settings-gui
+Icon=hermes-gpu-settings
+Terminal=false
+Categories=GNOME;GTK;Settings;HardwareSettings;X-GNOME-Settings-Panel;X-GNOME-DevicesSettings;
+Keywords=GPU;DRM;Mesa;GSP;NVIDIA;AMD;Intel;
+OnlyShowIn=GNOME;Unity;

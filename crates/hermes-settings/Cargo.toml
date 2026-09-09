@@ -12,6 +12,10 @@ repository.workspace = true
 name = "nvidia-settings"
 path = "src/main.rs"
 
+[[bin]]
+name = "hermes-settings-gui"
+path = "src/bin/hermes-settings-gui.rs"
+
 [dependencies]
 hermes-core = { workspace = true }
 hermes-gsp = { workspace = true }

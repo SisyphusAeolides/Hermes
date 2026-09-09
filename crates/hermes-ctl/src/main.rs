@@ -48,11 +48,13 @@ use hermes_mesa::{
     HermesVkPhysicalDeviceProperties, VK_ERROR_INCOMPATIBLE_DRIVER, VK_SUCCESS,
 };
 use hermes_nouveau::{comparison_matrix, hermes_exclusive_count, plan_gsp_load, NouveauChip};
+use nvidia_ml::hermes_nvml_host_gsp_status;
 
 fn main() {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
         Some("status") => status(),
+        Some("gsp-status") => gsp_status(),
         Some("admit") => {
             let id = parse_hex(args.next().as_deref().unwrap_or("0x1fb9"));
             admit_cmd(id);
@@ -132,7 +134,7 @@ fn main() {
         _ => {
             println!("hermes-ctl — Hermes GSP control\n");
             println!(
-                "commands: status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online|deep> | drm-smoke <offline|online|dual|gem|edid> | mesa-smoke <offline|online|gem> | stack-smoke | icd-json | silicon-probe [fwroot] | graphics-status [--report path] | host-bar | mailbox-smoke | silicon-bringup <sim|live-fw|fail-mailbox|host-block> | session-smoke | session-promote | smi-smoke <host|online> | chardev-smoke | kmod-status | kmod-load-smoke | kmod-online-smoke | silicon-fw-smoke | dropin-catalog | dropin-parity | dropin-complete"
+                "commands: status | gsp-status | admit | test-gates | bringup | modules | firmware-pin | firmware-scan | nouveau-compare | nouveau-plan | cccl | cuda-smoke <offline|online|deep> | drm-smoke <offline|online|dual|gem|edid> | mesa-smoke <offline|online|gem> | stack-smoke | icd-json | silicon-probe [fwroot] | graphics-status [--report path] | host-bar | mailbox-smoke | silicon-bringup <sim|live-fw|fail-mailbox|host-block> | session-smoke | session-promote | smi-smoke <host|online> | chardev-smoke | kmod-status | kmod-load-smoke | kmod-online-smoke | silicon-fw-smoke | dropin-catalog | dropin-parity | dropin-complete"
             );
         }
     }
@@ -170,6 +172,26 @@ fn status() {
     println!("Display: hermes-drm atomic modeset + hermes-mesa ICD surface");
     println!("Vulkan ICD library: {}", hermes_vulkan_icd_library_path());
     println!("Vulkan API version: {:#x}", hermes_vulkan_api_version());
+}
+
+fn gsp_status() {
+    let statuses = hermes_nvml_host_gsp_status();
+    if statuses.is_empty() {
+        println!("Hermes kernel GSP: OFFLINE");
+        std::process::exit(1);
+    }
+    for status in statuses {
+        println!(
+            "Hermes kernel GSP: ONLINE bus={} firmware={} flavor={}",
+            status.bus_id,
+            status.firmware_version,
+            if status.open_kernel_module {
+                "open"
+            } else {
+                "proprietary"
+            }
+        );
+    }
 }
 
 fn admit_cmd(device_id: u16) {

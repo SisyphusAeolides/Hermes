@@ -9,14 +9,15 @@ use hermes_core::HermesPhase;
 use nvidia_ml::{
     hermes_nvml_bind_sim_online_session, hermes_nvml_brand_name, hermes_nvml_discover_host_gpus,
     hermes_nvml_format_device_line, hermes_nvml_format_process_lines, hermes_nvml_gpu_count,
-    hermes_nvml_gpu_phase, hermes_nvml_promote_first_sim_online, hermes_nvml_register_process,
-    hermes_nvml_reset, nvmlDeviceGetArchitecture, nvmlDeviceGetBrand, nvmlDeviceGetClockInfo,
-    nvmlDeviceGetCount_v2, nvmlDeviceGetCudaComputeCapability, nvmlDeviceGetEnforcedPowerLimit,
-    nvmlDeviceGetFanSpeed, nvmlDeviceGetHandleByIndex_v2, nvmlDeviceGetMemoryInfo,
-    nvmlDeviceGetName, nvmlDeviceGetPCIBusId, nvmlDeviceGetPersistenceMode,
-    nvmlDeviceGetPowerUsage, nvmlDeviceGetTemperature, nvmlDeviceGetUtilizationRates, nvmlInit_v2,
-    nvmlShutdown, nvmlSystemGetCudaDriverVersion_v2, nvmlSystemGetDriverVersion, NvmlMemory_t,
-    NvmlUtilization_t, NVML_CLOCK_GRAPHICS, NVML_CLOCK_MEM, NVML_SUCCESS,
+    hermes_nvml_gpu_phase, hermes_nvml_host_gsp_status, hermes_nvml_promote_first_sim_online,
+    hermes_nvml_register_process, hermes_nvml_reset, nvmlDeviceGetArchitecture, nvmlDeviceGetBrand,
+    nvmlDeviceGetClockInfo, nvmlDeviceGetCount_v2, nvmlDeviceGetCudaComputeCapability,
+    nvmlDeviceGetEnforcedPowerLimit, nvmlDeviceGetFanSpeed, nvmlDeviceGetHandleByIndex_v2,
+    nvmlDeviceGetMemoryInfo, nvmlDeviceGetName, nvmlDeviceGetPCIBusId,
+    nvmlDeviceGetPersistenceMode, nvmlDeviceGetPowerUsage, nvmlDeviceGetTemperature,
+    nvmlDeviceGetUtilizationRates, nvmlInit_v2, nvmlShutdown, nvmlSystemGetCudaDriverVersion_v2,
+    nvmlSystemGetDriverVersion, NvmlMemory_t, NvmlUtilization_t, NVML_CLOCK_GRAPHICS,
+    NVML_CLOCK_MEM, NVML_SUCCESS,
 };
 
 fn cstr_buf(buf: &[i8]) -> String {
@@ -140,12 +141,30 @@ fn list_gpus() {
         let phase = hermes_nvml_gpu_phase(i as usize)
             .map(|p| p.label())
             .unwrap_or("?");
+        let bus_id = cstr_buf(&bus);
+        let kernel_gsp = hermes_nvml_host_gsp_status()
+            .into_iter()
+            .find(|status| status.bus_id == bus_id);
+        let display_state = if kernel_gsp.is_some() {
+            "ONLINE"
+        } else {
+            phase
+        };
+        let hermes_state = if kernel_gsp.is_some() && phase == "OFFLINE" {
+            "UNCLAIMED"
+        } else {
+            phase
+        };
         println!(
-            "GPU {}: {} (UUID n/a) Bus {} [{}]",
+            "GPU {}: {} (UUID n/a) Bus {} [{}] hermes_nvml={}{}",
             i,
             cstr_buf(&name),
-            cstr_buf(&bus),
-            phase
+            bus_id,
+            display_state,
+            hermes_state,
+            kernel_gsp
+                .map(|status| format!(" kernel_gsp=ONLINE firmware={}", status.firmware_version))
+                .unwrap_or_else(|| " kernel_gsp=OFFLINE".to_string())
         );
     }
 }
@@ -498,6 +517,18 @@ fn print_summary_table(discovered: usize) {
         println!("|  No running processes found                                                 |");
     }
     println!("+-----------------------------------------------------------------------------+");
+    for status in hermes_nvml_host_gsp_status() {
+        println!(
+            "Hermes kernel GSP: ONLINE bus={} firmware={} flavor={}",
+            status.bus_id,
+            status.firmware_version,
+            if status.open_kernel_module {
+                "open"
+            } else {
+                "proprietary"
+            }
+        );
+    }
 }
 
 fn truncate(s: &str, n: usize) -> String {
