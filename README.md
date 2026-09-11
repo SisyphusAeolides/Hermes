@@ -123,16 +123,6 @@ files, the kernel-module source, and the native RustD unit definition.
 Hermes unit with `rustctl`; Hermes does not require `systemctl` to start or
 manage its service:
 
-```sh
-sudo dnf copr enable sisyphuscode/hermes-gpu-stack
-sudo dnf install hermes-gpu-stack
-sudo rustctl enable hermes-gpu.service
-hermes-ctl graphics-status
-hermes-ctl kmod-status
-hermes-ctl dropin-catalog
-```
-
-
 ### Universal Hardware Coverage
 
 | Vendor | Family | Codec |
