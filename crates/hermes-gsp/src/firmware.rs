@@ -111,7 +111,7 @@ pub const NVIDIA_GSP_RM_610_43_03: [NvidiaGspFirmwareManifest; 2] = [
 ];
 
 /// Host-measured **610.57.04** GSP-RM pins. This is the current
-/// linux-firmware release staged on the ArachOS qualification host.
+/// linux-firmware release staged on the Fedora qualification host.
 pub const NVIDIA_GSP_RM_610_57_04: [NvidiaGspFirmwareManifest; 2] = [
     NvidiaGspFirmwareManifest::new(
         FirmwareFamily::Tu10x,

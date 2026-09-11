@@ -18,7 +18,7 @@ Languages:
 
 - **In scope:** Universal device admission (NVIDIA Turing+, AMD RDNA/CDNA, Intel Xe/Arc), strict firmware measurement gates (OpenRM, SMU, GuC), SEC2/bootstrap manifests, evidence-gated Online progression with safe fault recovery, Linux module/device/userspace **names** matching the proprietary stack, and formal models.
 - **Out of this tree’s git objects:** proprietary firmware blobs (stage them).
-- **Release status:** the default ArachOS host-graphics profile qualifies the
+- **Release status:** the default Fedora host-graphics profile qualifies the
   real DRM/Mesa display path available on the build machine and records
   unavailable vendor matrices as not tested. The full physical-GPU matrix
   remains strict and is required before claiming vendor-specific GSP/CUDA
@@ -76,7 +76,7 @@ make -C linux/kmod CC=gcc
 
 The commands above are development checks. They do not make a release. Run
 `scripts/qualify-release.sh` for the release contract; it writes a manifest
-even when a gate fails. ArachOS uses the host-graphics scope by default:
+even when a gate fails. Fedora uses the host-graphics scope by default:
 
 ```sh
 HERMES_HARDWARE_SCOPE=host-graphics bash scripts/qualify-release.sh
@@ -111,15 +111,15 @@ boot, DRM/KMS, CUDA, NVML, Mesa, MPS, UVM, peer memory, fault recovery, and
 soak gates. A module that merely loads, an offline status result, or a
 simulation promotion is not a release qualification.
 
-## ArachOS integration
+## Fedora integration
 
-Hermes is packaged as `hermes-gpu-stack` for ArachOS, the mkosi-based
+Hermes is packaged as `hermes-gpu-stack` for Fedora, the mkosi-based
 distribution that carries this checkout alongside RustD, RustD-resolved, and
-the ArachOS kernel qualification path. The package provides the Hermes
+the Fedora kernel qualification path. The package provides the Hermes
 control tools, the NVIDIA-compatible library names, the Vulkan/EGL registration
 files, the kernel-module source, and the native RustD unit definition.
 
-RustD replaces the service-manager runtime on ArachOS. Enable and inspect the
+ Enable and inspect the
 Hermes unit with `rustctl`; Hermes does not require `systemctl` to start or
 manage its service:
 
@@ -132,40 +132,6 @@ hermes-ctl kmod-status
 hermes-ctl dropin-catalog
 ```
 
-Build and validate the ArachOS dnf repository from the coordinated checkouts:
-
-```sh
-cd ~/Projects/ArachOS
-make verify-sources
-make build-packages
-make validate-packages
-```
-
-The ArachOS package carries the source needed to build Hermes' out-of-tree
-kernel modules for the selected target kernel. It does not bundle proprietary
-GPU firmware. Stage a matching, operator-approved firmware release under
-`target/hermes-gsp/`, run the firmware scan, and only then attempt hardware
-bring-up. Simulation flags are useful for exercising the state machine, but
-they never certify a physical GPU:
-
-```sh
-sh scripts/stage-linux-firmware-gsp.sh /lib/firmware target/hermes-gsp/staged
-cargo run -p hermes-ctl -- firmware-scan /lib/firmware
-cargo run -p hermes-ctl -- bringup both
-```
-
-The primary `nvidia.ko` surface performs the same pinned measurement during
-PCI probe (`firmware_version=` selects a staged, supported release). This
-removes the userspace-only measurement shortcut: firmware admission advances
-the real session to `FIRMWARED`, while IOMMU, WPR, mailbox, and ready-queue
-evidence still come from the live hardware path.
-
-The package and service expose the host display path without taking ownership
-away from a bound driver. `hermes-ctl graphics-status` reports the real DRM
-cards, drivers, render nodes, Mesa loader, and display session. It does not
-claim GSP Online; Hermes must report Offline when any GSP admission gate is
-absent. ArachOS release validation keeps that truthful state distinct from a
-successful hardware Online session.
 
 ### Universal Hardware Coverage
 

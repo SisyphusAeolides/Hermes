@@ -17,7 +17,7 @@ HARDWARE_SCOPE=${HERMES_HARDWARE_SCOPE:-full}
 TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/hermes-qualification.XXXXXX")
 trap 'rm -rf -- "$TMP_DIR"' EXIT
 
-# ArachOS calls this script from its own checkout. Every gate must execute
+# Fedora calls this script from its own checkout. Every gate must execute
 # against Hermes' workspace, otherwise Cargo could qualify whichever
 # repository happened to be the caller's current directory.
 cd "$ROOT"
