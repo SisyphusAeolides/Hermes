@@ -124,7 +124,7 @@ Hermes unit with `rustctl`; Hermes does not require `systemctl` to start or
 manage its service:
 
 ```sh
-sudo dnf -S hermes-gpu-stack
+sudo dnf install hermes-gpu-stack
 sudo rustctl enable hermes-gpu.service
 hermes-ctl graphics-status
 hermes-ctl kmod-status
