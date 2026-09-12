@@ -14,12 +14,21 @@ Languages:
 | **Idris2** | Total phase lattice and online certificates |
 | **Agda** | Feature lattice and ring geometry (`--safe`) |
 
+## Arch-first development
+
+Arch Linux and CachyOS are the primary development environments for Hermes.
+Install the native toolchain before running the checks:
+
+```sh
+sudo pacman -S --needed base-devel rust clang gcc-fortran
+```
+
 ## Scope and release status
 
 - **In scope:** Universal device admission (NVIDIA Turing+, AMD RDNA/CDNA, Intel Xe/Arc), strict firmware measurement gates (OpenRM, SMU, GuC), SEC2/bootstrap manifests, evidence-gated Online progression with safe fault recovery, Linux module/device/userspace **names** matching the proprietary stack, and formal models.
 - **Out of this tree’s git objects:** proprietary firmware blobs (stage them).
-- **Release status:** the default Fedora host-graphics profile qualifies the
-  real DRM/Mesa display path available on the build machine and records
+- **Release status:** the default host-graphics profile on Arch-based systems
+  qualifies the real DRM/Mesa display path available on the build machine and records
   unavailable vendor matrices as not tested. The full physical-GPU matrix
   remains strict and is required before claiming vendor-specific GSP/CUDA
   coverage.
@@ -76,7 +85,7 @@ make -C linux/kmod CC=gcc
 
 The commands above are development checks. They do not make a release. Run
 `scripts/qualify-release.sh` for the release contract; it writes a manifest
-even when a gate fails. Fedora uses the host-graphics scope by default:
+even when a gate fails. Arch-based hosts use the host-graphics scope by default:
 
 ```sh
 HERMES_HARDWARE_SCOPE=host-graphics bash scripts/qualify-release.sh
@@ -111,17 +120,16 @@ boot, DRM/KMS, CUDA, NVML, Mesa, MPS, UVM, peer memory, fault recovery, and
 soak gates. A module that merely loads, an offline status result, or a
 simulation promotion is not a release qualification.
 
-## Fedora integration
+## Arch integration
 
-Hermes is packaged as `hermes-gpu-stack` for Fedora, the mkosi-based
-distribution that carries this checkout alongside RustD, RustD-resolved, and
-the Fedora kernel qualification path. The package provides the Hermes
-control tools, the NVIDIA-compatible library names, the Vulkan/EGL registration
-files, the kernel-module source, and the native RustD unit definition.
+Hermes keeps its Arch-first host integration in this checkout. The mkosi-based
+image path carries this tree alongside RustD, RustD-resolved, and the kernel
+qualification path. The integration provides the Hermes control tools, the
+NVIDIA-compatible library names, the Vulkan/EGL registration files, the
+kernel-module source, and the native RustD unit definition.
 
- Enable and inspect the
-Hermes unit with `rustctl`; Hermes does not require `systemctl` to start or
-manage its service:
+When RustD is present, enable and inspect the Hermes unit with `rustctl`; Hermes
+does not require `systemctl` to start or manage its service:
 
 ### Universal Hardware Coverage
 
