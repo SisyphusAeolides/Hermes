@@ -2,7 +2,7 @@
 
 Name:           hermes
 Version:        0.1.0
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        Open-source GPU System Processor and Firmware Host for NVIDIA, AMD, and Intel GPUs
 
 License:        MIT
@@ -61,5 +61,8 @@ install -Dm644 assets/icons/hermes-gpu-settings.svg %{buildroot}%{_datadir}/icon
 %{_datadir}/icons/hicolor/scalable/apps/hermes-gpu-settings.svg
 
 %changelog
+* Sat Nov 07 2026 Kenny Glauner <SisyphusAeolides@pm.me> - 0.1.0-2
+- Add MacBook Pro Kepler NVKM, Intel Crystal Well Gen7.5, live sysfs/applesmc telemetry, and hermes-settings-gui packaging
+
 * Sun Sep 13 2026 Kenny Glauner <SisyphusAeolides@pm.me> - 0.1.0-1
 - Initial RPM packaging

@@ -32,7 +32,7 @@ sudo dnf install hermes
 
 ## Scope and release status
 
-- **In scope:** Universal device admission (NVIDIA Turing+, AMD RDNA/CDNA, Intel Xe/Arc), strict firmware measurement gates (OpenRM, SMU, GuC), SEC2/bootstrap manifests, evidence-gated Online progression with safe fault recovery, Linux module/device/userspace **names** matching the proprietary stack, and formal models.
+- **In scope:** Universal device admission (NVIDIA Turing+ GSP-RM and Kepler NVKM/Falcon, AMD RDNA/CDNA, Intel Gen7/Gen8/Gen9/Gen11/Gen12/Xe/Arc), strict firmware measurement gates (OpenRM, NVKM, SMU, GuC), SEC2/bootstrap manifests, evidence-gated Online progression with safe fault recovery, live hardware sensor telemetry (`hwmon`, `applesmc` dual-fan tachometers, PCIe link state, DRM clocks), Linux module/device/userspace **names** matching the proprietary stack, and formal models.
 - **Out of this tree’s git objects:** proprietary firmware blobs (stage them).
 - **Release status:** the default host-graphics profile on Fedora-based systems
   qualifies the real DRM/Mesa display path available on the build machine and records
@@ -51,8 +51,8 @@ crates/
   hermes-core/      Vendor admission (NVIDIA, AMD, Intel), chaos manifold, HAL
   hermes-gsp/       GSP-RM manifests, bootstrap, activation plan
   hermes-linux/     Drop-in module / device / userspace names
-  hermes-settings/  nvidia-settings + hermes-settings binaries
-  hermes-nvml/      NVML-compatible shared library surface
+  hermes-settings/  nvidia-settings CLI + hermes-settings-gui desktop control center
+  hermes-nvml/      NVML-compatible shared library surface + live sysfs/hwmon/applesmc telemetry
   hermes-ctl/       hermes-ctl (universal diagnostic) + nvidia-smi binaries
   hermes-nouveau/   Nouveau GSP path tables + superiority matrix
   hermes-cccl/      CCCL (Thrust/CUB) catalog + host subset
@@ -141,13 +141,21 @@ sudo systemctl enable --now hermes
 
 ### Universal Hardware Coverage
 
-| Vendor | Family | Codec |
+| Vendor | Family | Codec / Path |
 |---|---|---|
-| **NVIDIA** | Turing, Ampere, Hopper, Ada, Blackwell | OpenRM / GSP-RM |
+| **NVIDIA (GSP-RM)** | Turing, Ampere, Hopper, Ada, Blackwell | OpenRM / GSP-RM |
+| **NVIDIA (NVKM)** | Kepler (`GK104` / `GK106` / `GK107` / `GK107M` Mac Edition `10de:0fe9` / `GK110` / `GK208`) | Nouveau DRM / NVKM Falcon + Live `hwmon` & `applesmc` Telemetry |
 | **AMD** | RDNA, RDNA2, RDNA3, CDNA, CDNA2, CDNA3 | PSP / SMU |
-| **Intel** | Gen9, Gen11, Gen12, Xe, Arc | GuC / HuC |
+| **Intel** | Gen7/Gen7.5 (`Haswell` / `Crystal Well` `8086:0d26`), Gen8 (`Broadwell`), Gen9, Gen11, Gen12, Xe, Arc | `i915` / `xe` DRM + GuC / HuC |
 
-Pre-Turing (Maxwell / Pascal / Volta) is **rejected**.
+Pre-Turing non-NVKM generations without an admitted host path (Maxwell / Pascal / Volta) are **rejected** by the GSP-RM admission gate.
+
+### Apple MacBook Pro (`MacBookPro11,3`) & Hybrid Graphics Support
+
+Hermes provides first-class support for hybrid Intel + NVIDIA laptops, including the Apple `MacBookPro11,3` (`Intel Crystal Well Iris Pro 5200 [8086:0d26]` + `NVIDIA GeForce GT 750M Mac Edition [10de:0fe9]` with `apple_gmux` and `applesmc`):
+- **Automatic DRM/NVKM Discovery:** `nvidia-smi`, `nvidia-settings`, and `hermes-ctl graphics-status` detect active `nouveau` and `i915` DRM/KMS bindings and 64-bit Mesa/EGL (`libEGL.so.1`) out of the box.
+- **Live Hardware Telemetry:** Queries real GPU die temperature (`hwmon` `temp1_input` / `applesmc` `TG0D`/`TG0P`), dual-fan RPM percentage (`applesmc` `fan1_input` / `fan2_input`), GPU core voltage and power draw (`in0_input` / `power1_input`), PCIe link width (`current_link_width` / `max_link_width`), and Kepler/Turing clock domains.
+- **Desktop GPU & Power Control Center (`hermes-settings-gui`):** Native desktop utility (`Hermes GPU Settings`) displaying live DRM/Mesa status, `nvidia-settings` surface state, `nvidia-smi` telemetry, and one-click `TuneD` system power profiles.
 
 ## Drop-in install (Linux)
 
@@ -156,7 +164,7 @@ After building:
 | Proprietary Entry | Hermes Artifact |
 |---|---|
 | `nvidia` module name | `hermes-linux` personality / `hermes-gsp` (classic name `nvidia` when configured) |
-| `nvidia-settings` | `target/release/nvidia-settings` |
+| `nvidia-settings` | `target/release/nvidia-settings` + `target/release/hermes-settings-gui` |
 | `nvidia-smi` | `target/release/nvidia-smi` (universal `hermes-ctl` backend) |
 | `libnvidia-ml.so.1` | `target/release/libnvidia_ml.so` (symlink to the classic soname) |
 
