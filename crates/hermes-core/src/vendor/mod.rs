@@ -7,10 +7,10 @@ pub mod nvidia;
 pub use amd::{amd_architecture, AmdArchitecture, AMD_VENDOR_ID};
 pub use intel::{intel_architecture, IntelArchitecture, INTEL_VENDOR_ID};
 pub use nvidia::{
-    is_nvidia_turing_or_newer, nvidia_architecture, nvidia_architecture_hint, NvidiaArchitecture,
-    NVIDIA_ARCHITECTURE_ADA, NVIDIA_ARCHITECTURE_AMPERE, NVIDIA_ARCHITECTURE_BLACKWELL,
-    NVIDIA_ARCHITECTURE_HOPPER, NVIDIA_ARCHITECTURE_TURING, NVIDIA_ARCHITECTURE_TURING_OR_NEWER,
-    NVIDIA_VENDOR_ID,
+    is_nvidia_kepler_nvkm, is_nvidia_supported_host_gpu, is_nvidia_turing_or_newer,
+    nvidia_architecture, nvidia_architecture_hint, NvidiaArchitecture, NVIDIA_ARCHITECTURE_ADA,
+    NVIDIA_ARCHITECTURE_AMPERE, NVIDIA_ARCHITECTURE_BLACKWELL, NVIDIA_ARCHITECTURE_HOPPER,
+    NVIDIA_ARCHITECTURE_TURING, NVIDIA_ARCHITECTURE_TURING_OR_NEWER, NVIDIA_VENDOR_ID,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -33,6 +33,8 @@ impl VendorArchitecture {
                 AmdArchitecture::CDNA3 => "CDNA3",
             },
             Self::Intel(arch) => match arch {
+                IntelArchitecture::Gen7 => "Gen7",
+                IntelArchitecture::Gen8 => "Gen8",
                 IntelArchitecture::Gen9 => "Gen9",
                 IntelArchitecture::Gen11 => "Gen11",
                 IntelArchitecture::Gen12 => "Gen12",

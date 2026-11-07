@@ -179,4 +179,14 @@ mod tests {
             VendorArchitecture::Intel(IntelArchitecture::Arc)
         );
     }
+
+    #[test]
+    fn admits_intel_crystal_well_gen7() {
+        let crystal_well = pci_identity(INTEL_VENDOR_ID, 0x0d26, PCI_CLASS_DISPLAY, 0x00);
+        let admitted = admit_display_device(&crystal_well).expect("Crystal Well must admit");
+        assert_eq!(
+            admitted.architecture,
+            VendorArchitecture::Intel(IntelArchitecture::Gen7)
+        );
+    }
 }

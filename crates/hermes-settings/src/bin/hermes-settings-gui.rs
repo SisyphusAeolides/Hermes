@@ -248,12 +248,14 @@ fn respond(
 fn status_json() -> String {
     let graphics = command_output("hermes-ctl", &["graphics-status"]);
     let settings = command_output("nvidia-settings", &["--status"]);
+    let smi = command_output("nvidia-smi", &[]);
     let power = command_output("tuned-adm", &["active"]);
     let active_profile = active_profile_name(&power);
     format!(
-        "{{\"graphics\":{},\"settings\":{},\"power\":{},\"active_profile\":{},\"profiles\":{}}}",
+        "{{\"graphics\":{},\"settings\":{},\"smi\":{},\"power\":{},\"active_profile\":{},\"profiles\":{}}}",
         json_string(&graphics),
         json_string(&settings),
+        json_string(&smi),
         json_string(&power),
         json_string(&active_profile),
         profile_catalog_json()
@@ -265,7 +267,15 @@ fn command_output(program: &str, arguments: &[&str]) -> String {
 }
 
 fn command_result(program: &str, arguments: &[&str]) -> (bool, String) {
-    let candidates = [format!("/usr/local/bin/{program}"), program.to_string()];
+    let mut candidates = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join(program).display().to_string());
+        }
+    }
+    candidates.push(format!("/usr/local/bin/{program}"));
+    candidates.push(format!("/usr/bin/{program}"));
+    candidates.push(program.to_string());
     let mut last_error = None;
     for candidate in candidates {
         let output = Command::new(&candidate).args(arguments).output();

@@ -4,8 +4,8 @@
 //! instead of static empty GPU lists.
 
 use hermes_core::{
-    admit_display_device, is_nvidia_turing_or_newer, nvidia_architecture, pci_identity,
-    HermesPhase, NVIDIA_VENDOR_ID,
+    admit_display_device, is_nvidia_kepler_nvkm, is_nvidia_turing_or_newer, nvidia_architecture,
+    pci_identity, HermesPhase, NVIDIA_VENDOR_ID,
 };
 use hermes_gsp::{firmware_family_for_device, FirmwareFamily, NVIDIA_GSP_RM_610_57_04};
 use hermes_linux::{devices, drop_in_module_name, modules, userspace, MODULE_SURFACES};
@@ -240,7 +240,8 @@ fn list_devices() {
 
 fn compat_matrix() {
     let samples = [
-        (0x1db6u16, "GV100 Volta"),
+        (0x0fe9u16, "GK107M GT 750M Mac"),
+        (0x1db6, "GV100 Volta"),
         (0x1e04, "TU102 Turing"),
         (0x1fb9, "TU117GLM T1000"),
         (0x2204, "GA102 Ampere"),
@@ -258,10 +259,24 @@ fn compat_matrix() {
                 FirmwareFamily::Tu10x => "tu10x",
                 FirmwareFamily::Ga10x => "ga10x",
             })
-            .unwrap_or("-");
+            .unwrap_or_else(|| {
+                if is_nvidia_kepler_nvkm(id) {
+                    "nvkm"
+                } else {
+                    "-"
+                }
+            });
         let identity = pci_identity(NVIDIA_VENDOR_ID, id, 0x03, 0x00);
-        let admit = admit_display_device(&identity).is_ok();
-        let arch = nvidia_architecture(id).map(|a| a.as_str()).unwrap_or("n/a");
+        let admit = admit_display_device(&identity).is_ok() || is_nvidia_kepler_nvkm(id);
+        let arch = nvidia_architecture(id)
+            .map(|a| a.as_str())
+            .unwrap_or_else(|| {
+                if is_nvidia_kepler_nvkm(id) {
+                    "Kepler"
+                } else {
+                    "n/a"
+                }
+            });
         println!("{id:#06x}  {name:<18} {turing_plus:<8} {fam:<10} {admit} ({arch})");
     }
 }

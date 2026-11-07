@@ -8,8 +8,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use hermes_core::{
-    admit_display_device, is_nvidia_turing_or_newer, nvidia_architecture, pci_identity,
-    NVIDIA_VENDOR_ID,
+    admit_display_device, is_nvidia_kepler_nvkm, is_nvidia_turing_or_newer, nvidia_architecture,
+    pci_identity, NVIDIA_VENDOR_ID,
 };
 use hermes_gsp::{
     chip_gsp_relative, facts_from_sysfs, firmware_family_for_device, fwversion_bytes,
@@ -311,8 +311,21 @@ pub fn probe_host(firmware_root: &Path) -> SiliconReport {
 
     for gpu in &gpus {
         let turing = is_nvidia_turing_or_newer(gpu.device);
+        let kepler = is_nvidia_kepler_nvkm(gpu.device);
         if turing {
             any_turing_plus = true;
+        } else if kepler {
+            let bar_try = attempt_bar0_map(gpu);
+            let facts = facts_for_gpu(gpu, bar_try.ok);
+            let may = host_may_claim_online(&facts);
+            host_facts.push((gpu.bdf.clone(), facts, may));
+            blockers.push(format!(
+                "{} device {:04x} is NVIDIA Kepler (NVKM/Falcon path; non-GSP architecture, active driver={})",
+                gpu.bdf,
+                gpu.device,
+                gpu.driver.as_deref().unwrap_or("none")
+            ));
+            continue;
         } else {
             blockers.push(format!(
                 "{} device {:04x} is pre-Turing — Hermes rejects",
@@ -437,7 +450,13 @@ pub fn print_report(r: &SiliconReport) {
     for g in &r.gpus {
         let arch = nvidia_architecture(g.device)
             .map(|a| a.as_str())
-            .unwrap_or("?");
+            .unwrap_or_else(|| {
+                if is_nvidia_kepler_nvkm(g.device) {
+                    "Kepler"
+                } else {
+                    "?"
+                }
+            });
         println!(
             "  {} {:04x}:{:04x} class={:02x}:{:02x} arch={} turing+={} driver={} iommu={:?} bar0={:?}",
             g.bdf,

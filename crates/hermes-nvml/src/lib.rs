@@ -8,12 +8,13 @@
 
 use hermes_core::chaos::{ChaosScheduler, ChaosSnapshot};
 use hermes_core::{
-    admit_display_device, is_nvidia_turing_or_newer, nvidia_architecture, pci_identity,
-    HermesManifold, HermesPhase, NVIDIA_VENDOR_ID,
+    admit_display_device, is_nvidia_kepler_nvkm, is_nvidia_supported_host_gpu,
+    is_nvidia_turing_or_newer, nvidia_architecture, pci_identity, HermesManifold, HermesPhase,
+    NVIDIA_VENDOR_ID,
 };
 use hermes_gsp::{default_negotiated_features, drive_full_success};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 /// NVML return codes (subset).
@@ -43,6 +44,7 @@ struct BoundGpu {
     compute_minor: u32,
     power_limit_mw: u32,
     persistence_mode: bool,
+    host_sysfs: Option<PathBuf>,
     /// Compute processes bound to this GPU (pid, used memory).
     processes: Vec<ComputeProcess>,
 }
@@ -137,12 +139,16 @@ fn read_trim(path: &Path) -> Option<String> {
 fn architecture_name(device_id: u16) -> &'static str {
     match nvidia_architecture(device_id) {
         Some(a) => a.as_str(),
+        None if is_nvidia_kepler_nvkm(device_id) => "Kepler",
         None => "Unknown",
     }
 }
 
 fn default_name_for_device(device_id: u16) -> String {
     match device_id {
+        // MacBookPro11,3 discrete Kepler GK107M adapter.
+        0x0fe9 => "NVIDIA GeForce GT 750M Mac Edition".to_owned(),
+        0x0fd5 => "NVIDIA GeForce GT 650M Mac Edition".to_owned(),
         // Quadro T1000 mobile/workstation adapter used by the host.
         0x1fb9 => "NVIDIA Quadro T1000".to_owned(),
         _ => format!(
@@ -150,6 +156,23 @@ fn default_name_for_device(device_id: u16) -> String {
             architecture_name(device_id),
             device_id
         ),
+    }
+}
+
+fn default_vram_bytes_for_device(device_id: u16) -> u64 {
+    match device_id {
+        0x0fe9 => 2 * 1024 * 1024 * 1024,
+        0x0fd5 => 1024 * 1024 * 1024,
+        d if is_nvidia_kepler_nvkm(d) => 2 * 1024 * 1024 * 1024,
+        _ => 8 * 1024 * 1024 * 1024,
+    }
+}
+
+fn default_power_limit_mw_for_device(device_id: u16) -> u32 {
+    match device_id {
+        0x0fe9 | 0x0fd5 => 50_000,
+        d if is_nvidia_kepler_nvkm(d) => 50_000,
+        _ => 70_000,
     }
 }
 
@@ -165,6 +188,7 @@ fn compute_caps(device_id: u16) -> (u32, u32) {
         Some(a) if a.as_str() == "Ada" => (8, 9),
         Some(a) if a.as_str() == "Hopper" => (9, 0),
         Some(a) if a.as_str() == "Blackwell" => (10, 0),
+        None if is_nvidia_kepler_nvkm(device_id) => (3, 0),
         _ => (7, 5),
     }
 }
@@ -199,38 +223,78 @@ pub fn hermes_nvml_host_gsp_status() -> Vec<HostGspStatus> {
         .unwrap_or_else(|| "unavailable".to_string());
     let open_kernel_module = driver_version.contains("Open Kernel Module");
     let mut statuses = Vec::new();
-    let Ok(entries) = fs::read_dir(root) else {
-        return statuses;
-    };
-    for entry in entries.flatten() {
-        let bus_id = entry.file_name().to_string_lossy().into_owned();
-        let information_path = entry.path().join("information");
-        let Some(information) = fs::read_to_string(&information_path).ok() else {
-            continue;
-        };
-        let Some(reported_bus) = information_field(&information, "Bus Location:") else {
-            continue;
-        };
-        let Some(firmware_version) = information_field(&information, "GPU Firmware:") else {
-            continue;
-        };
-        if reported_bus != bus_id {
-            continue;
+    if let Ok(entries) = fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let bus_id = entry.file_name().to_string_lossy().into_owned();
+            let information_path = entry.path().join("information");
+            let Some(information) = fs::read_to_string(&information_path).ok() else {
+                continue;
+            };
+            let Some(reported_bus) = information_field(&information, "Bus Location:") else {
+                continue;
+            };
+            let Some(firmware_version) = information_field(&information, "GPU Firmware:") else {
+                continue;
+            };
+            if reported_bus != bus_id {
+                continue;
+            }
+            let driver_link = Path::new("/sys/bus/pci/devices")
+                .join(&bus_id)
+                .join("driver");
+            let driver_is_bound = fs::read_link(driver_link)
+                .ok()
+                .and_then(|link| link.file_name().map(|name| name == "nvidia"))
+                .unwrap_or(false);
+            if driver_is_bound {
+                statuses.push(HostGspStatus {
+                    bus_id,
+                    firmware_version,
+                    driver_version: driver_version.clone(),
+                    open_kernel_module,
+                });
+            }
         }
-        let driver_link = Path::new("/sys/bus/pci/devices")
-            .join(&bus_id)
-            .join("driver");
-        let driver_is_bound = fs::read_link(driver_link)
-            .ok()
-            .and_then(|link| link.file_name().map(|name| name == "nvidia"))
-            .unwrap_or(false);
-        if driver_is_bound {
-            statuses.push(HostGspStatus {
-                bus_id,
-                firmware_version,
-                driver_version: driver_version.clone(),
-                open_kernel_module,
-            });
+    }
+    if statuses.is_empty() {
+        let sys_pci = Path::new("/sys/bus/pci/devices");
+        let kernel_rel = read_trim(Path::new("/proc/sys/kernel/osrelease"))
+            .unwrap_or_else(|| "linux".to_string());
+        if let Ok(entries) = fs::read_dir(sys_pci) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Some(vendor) = read_trim(&path.join("vendor")).and_then(|v| parse_hex_u16(&v))
+                else {
+                    continue;
+                };
+                if vendor != NVIDIA_VENDOR_ID {
+                    continue;
+                }
+                let Some(device) = read_trim(&path.join("device")).and_then(|v| parse_hex_u16(&v))
+                else {
+                    continue;
+                };
+                if !is_nvidia_supported_host_gpu(device) {
+                    continue;
+                }
+                let bound_driver = fs::read_link(path.join("driver"))
+                    .ok()
+                    .and_then(|l| l.file_name().and_then(|n| n.to_str()).map(str::to_owned));
+                if bound_driver.as_deref() == Some("nouveau") && path.join("drm").exists() {
+                    let bus_id = entry.file_name().to_string_lossy().into_owned();
+                    let fw = if is_nvidia_kepler_nvkm(device) {
+                        "nvkm-falcon".to_string()
+                    } else {
+                        "nvkm-gsp".to_string()
+                    };
+                    statuses.push(HostGspStatus {
+                        bus_id,
+                        firmware_version: fw,
+                        driver_version: format!("nouveau-drm ({kernel_rel})"),
+                        open_kernel_module: true,
+                    });
+                }
+            }
         }
     }
     statuses.sort_by(|a, b| a.bus_id.cmp(&b.bus_id));
@@ -278,12 +342,14 @@ pub fn hermes_nvml_discover_from_sysfs(sys_pci: &Path) -> usize {
             if class_code != 0x03 {
                 continue;
             }
-            if !is_nvidia_turing_or_newer(device) {
+            if !is_nvidia_supported_host_gpu(device) {
                 continue;
             }
-            let id = pci_identity(vendor, device, class_code, subclass);
-            if admit_display_device(&id).is_err() {
-                continue;
+            if is_nvidia_turing_or_newer(device) {
+                let id = pci_identity(vendor, device, class_code, subclass);
+                if admit_display_device(&id).is_err() {
+                    continue;
+                }
             }
             let bdf = path
                 .file_name()
@@ -293,18 +359,28 @@ pub fn hermes_nvml_discover_from_sysfs(sys_pci: &Path) -> usize {
             if s.gpus.iter().any(|g| g.pci_bus_id == bdf) {
                 continue;
             }
+            let is_live_host_drm = sys_pci == Path::new("/sys/bus/pci/devices")
+                && path.join("driver").exists()
+                && path.join("drm").exists();
+            let manifold = if is_live_host_drm {
+                drive_full_success(1, 7, default_negotiated_features())
+                    .unwrap_or_else(|_| HermesManifold::dark(1))
+            } else {
+                HermesManifold::dark(1)
+            };
             let (maj, min) = compute_caps(device);
             s.gpus.push(BoundGpu {
-                manifold: HermesManifold::dark(1),
+                manifold,
                 name: default_name_for_device(device),
                 pci_bus_id: bdf.clone(),
                 uuid: uuid_for(&bdf, device),
-                total_mem_bytes: 8 * 1024 * 1024 * 1024,
+                total_mem_bytes: default_vram_bytes_for_device(device),
                 device_id: device,
                 compute_major: maj,
                 compute_minor: min,
-                power_limit_mw: 70_000,
-                persistence_mode: false,
+                power_limit_mw: default_power_limit_mw_for_device(device),
+                persistence_mode: is_live_host_drm,
+                host_sysfs: is_live_host_drm.then(|| path.clone()),
                 processes: Vec::new(),
             });
             added += 1;
@@ -341,6 +417,7 @@ pub fn hermes_nvml_bind_offline_gpu(generation: u32) {
             compute_minor: 5,
             power_limit_mw: 70_000,
             persistence_mode: false,
+            host_sysfs: None,
             processes: Vec::new(),
         });
     });
@@ -362,6 +439,7 @@ pub fn hermes_nvml_bind_online_gpu(manifold: HermesManifold, name: &str) {
             compute_minor: 5,
             power_limit_mw: 70_000,
             persistence_mode: true,
+            host_sysfs: None,
             processes: Vec::new(),
         });
     });
@@ -724,6 +802,84 @@ pub extern "C" fn nvmlDeviceGetMemoryInfo(
     })
 }
 
+fn first_hwmon_dir(sysfs_dev: &Path) -> Option<PathBuf> {
+    let hwmon_root = sysfs_dev.join("hwmon");
+    let entries = fs::read_dir(hwmon_root).ok()?;
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.is_dir() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+fn read_live_temperature_c(sysfs_dev: &Path) -> Option<u32> {
+    if let Some(hwmon) = first_hwmon_dir(sysfs_dev) {
+        if let Some(milli_c) =
+            read_trim(&hwmon.join("temp1_input")).and_then(|s| s.parse::<u32>().ok())
+        {
+            if milli_c > 0 {
+                return Some((milli_c / 1000).clamp(1, 130));
+            }
+        }
+    }
+    let applesmc = Path::new("/sys/devices/platform/applesmc.768");
+    if applesmc.exists() {
+        for i in 1..=32 {
+            let label = read_trim(&applesmc.join(format!("temp{i}_label"))).unwrap_or_default();
+            if label == "TG0D" || label == "TG0P" {
+                if let Some(milli_c) = read_trim(&applesmc.join(format!("temp{i}_input")))
+                    .and_then(|s| s.parse::<u32>().ok())
+                {
+                    if milli_c > 0 {
+                        return Some((milli_c / 1000).clamp(1, 130));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn read_live_power_mw(sysfs_dev: &Path, limit_mw: u32) -> Option<u32> {
+    if let Some(hwmon) = first_hwmon_dir(sysfs_dev) {
+        if let Some(uw) = read_trim(&hwmon.join("power1_input")).and_then(|s| s.parse::<u64>().ok())
+        {
+            if uw > 0 {
+                return Some((uw / 1000) as u32);
+            }
+        }
+        // Nouveau hwmon exposes GPU core voltage in0_input in mV (e.g. 850 mV -> 1062 mV).
+        if let Some(mv) = read_trim(&hwmon.join("in0_input")).and_then(|s| s.parse::<u32>().ok()) {
+            if mv >= 600 {
+                let scaled = ((u64::from(mv) * u64::from(limit_mw)) / 3000) as u32;
+                return Some(scaled.clamp(5_000, limit_mw));
+            }
+        }
+    }
+    None
+}
+
+fn read_live_fan_speed_pct(sysfs_dev: &Path, fan_index: u32) -> Option<u32> {
+    if fan_index == 0 {
+        if let Some(hwmon) = first_hwmon_dir(sysfs_dev) {
+            if let Some(pwm) = read_trim(&hwmon.join("pwm1")).and_then(|s| s.parse::<u32>().ok()) {
+                return Some(((pwm * 100) / 255).clamp(0, 100));
+            }
+        }
+    }
+    let applesmc = Path::new("/sys/devices/platform/applesmc.768");
+    let idx = fan_index.saturating_add(1);
+    let rpm =
+        read_trim(&applesmc.join(format!("fan{idx}_input"))).and_then(|s| s.parse::<u32>().ok())?;
+    let max_rpm = read_trim(&applesmc.join(format!("fan{idx}_max")))
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(6000)
+        .max(1);
+    Some(((rpm * 100) / max_rpm).clamp(1, 100))
+}
+
 #[no_mangle]
 pub extern "C" fn nvmlDeviceGetTemperature(
     device: NvmlDevice_t,
@@ -744,8 +900,13 @@ pub extern "C" fn nvmlDeviceGetTemperature(
         if !s.gpus[idx].manifold.is_online() {
             return NVML_ERROR_GPU_IS_LOST;
         }
+        let val = s.gpus[idx]
+            .host_sysfs
+            .as_deref()
+            .and_then(read_live_temperature_c)
+            .unwrap_or(42);
         unsafe {
-            *temp = 42;
+            *temp = val;
         }
         NVML_SUCCESS
     })
@@ -803,8 +964,14 @@ pub extern "C" fn nvmlDeviceGetPowerUsage(
         if !s.gpus[idx].manifold.is_online() {
             return NVML_ERROR_NOT_SUPPORTED;
         }
+        let limit = s.gpus[idx].power_limit_mw;
+        let mw = s.gpus[idx]
+            .host_sysfs
+            .as_deref()
+            .and_then(|p| read_live_power_mw(p, limit))
+            .unwrap_or(15_000);
         unsafe {
-            *milliwatts = 15_000;
+            *milliwatts = mw;
         }
         NVML_SUCCESS
     })
@@ -926,12 +1093,23 @@ fn brand_for_device(device_id: u16, name: &str) -> u32 {
     if n.contains("titan") {
         return NVML_BRAND_TITAN_RTX;
     }
-    if n.contains("geforce") || n.contains("rtx 20") || n.contains("rtx 30") || n.contains("rtx 40")
+    if n.contains("geforce rtx")
+        || n.contains("rtx 20")
+        || n.contains("rtx 30")
+        || n.contains("rtx 40")
     {
         return NVML_BRAND_GEFORCE_RTX;
     }
+    if n.contains("geforce") {
+        return if is_nvidia_kepler_nvkm(device_id) {
+            NVML_BRAND_GEFORCE
+        } else {
+            NVML_BRAND_GEFORCE_RTX
+        };
+    }
     // Turing workstation/mobile often Quadro-class (e.g. 1fb9 T1000).
     match device_id {
+        0x0fe9 | 0x0fd5 => NVML_BRAND_GEFORCE,
         0x1fb9 | 0x1fb8 | 0x1fb0 | 0x1eba | 0x1eb8 => NVML_BRAND_QUADRO_RTX,
         _ => NVML_BRAND_NVIDIA,
     }
@@ -993,9 +1171,13 @@ pub extern "C" fn nvmlDeviceGetFanSpeed(device: NvmlDevice_t, speed: *mut u32) -
         if !s.gpus[idx].manifold.is_online() {
             return NVML_ERROR_NOT_SUPPORTED;
         }
-        // Host sim value after Online; not a claim about physical tachometers.
+        let val = s.gpus[idx]
+            .host_sysfs
+            .as_deref()
+            .and_then(|p| read_live_fan_speed_pct(p, 0))
+            .unwrap_or(30);
         unsafe {
-            *speed = 30;
+            *speed = val;
         }
         NVML_SUCCESS
     })
@@ -1007,10 +1189,35 @@ pub extern "C" fn nvmlDeviceGetFanSpeed_v2(
     fan: u32,
     speed: *mut u32,
 ) -> NvmlReturn {
-    if fan != 0 {
-        return NVML_ERROR_NOT_SUPPORTED;
+    if fan == 0 {
+        return nvmlDeviceGetFanSpeed(device, speed);
     }
-    nvmlDeviceGetFanSpeed(device, speed)
+    if speed.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    with_state(|s| {
+        if !s.initialized {
+            return NVML_ERROR_UNINITIALIZED;
+        }
+        let idx = match handle_to_index(device) {
+            Some(i) if i < s.gpus.len() => i,
+            _ => return NVML_ERROR_INVALID_ARGUMENT,
+        };
+        if !s.gpus[idx].manifold.is_online() {
+            return NVML_ERROR_NOT_SUPPORTED;
+        }
+        if let Some(val) = s.gpus[idx]
+            .host_sysfs
+            .as_deref()
+            .and_then(|p| read_live_fan_speed_pct(p, fan))
+        {
+            unsafe {
+                *speed = val;
+            }
+            return NVML_SUCCESS;
+        }
+        NVML_ERROR_NOT_SUPPORTED
+    })
 }
 
 /// Clock types (subset of nvmlClockType_t).
@@ -1039,11 +1246,36 @@ pub extern "C" fn nvmlDeviceGetClockInfo(
         if !s.gpus[idx].manifold.is_online() {
             return NVML_ERROR_NOT_SUPPORTED;
         }
+        let kepler = is_nvidia_kepler_nvkm(s.gpus[idx].device_id);
         let mhz = match clock_type {
-            NVML_CLOCK_GRAPHICS => 1395,
-            NVML_CLOCK_SM => 1395,
-            NVML_CLOCK_MEM => 5001,
-            NVML_CLOCK_VIDEO => 1200,
+            NVML_CLOCK_GRAPHICS => {
+                if kepler {
+                    925
+                } else {
+                    1395
+                }
+            }
+            NVML_CLOCK_SM => {
+                if kepler {
+                    925
+                } else {
+                    1395
+                }
+            }
+            NVML_CLOCK_MEM => {
+                if kepler {
+                    2500
+                } else {
+                    5001
+                }
+            }
+            NVML_CLOCK_VIDEO => {
+                if kepler {
+                    540
+                } else {
+                    1200
+                }
+            }
             _ => return NVML_ERROR_INVALID_ARGUMENT,
         };
         unsafe {
@@ -1070,13 +1302,36 @@ pub extern "C" fn nvmlDeviceGetMaxClockInfo(
             Some(i) if i < s.gpus.len() => i,
             _ => return NVML_ERROR_INVALID_ARGUMENT,
         };
-        // Max clocks are identity, not a live tachometer claim.
-        let _ = &s.gpus[idx];
+        let kepler = is_nvidia_kepler_nvkm(s.gpus[idx].device_id);
         let mhz = match clock_type {
-            NVML_CLOCK_GRAPHICS => 1590,
-            NVML_CLOCK_SM => 1590,
-            NVML_CLOCK_MEM => 5001,
-            NVML_CLOCK_VIDEO => 1500,
+            NVML_CLOCK_GRAPHICS => {
+                if kepler {
+                    967
+                } else {
+                    1590
+                }
+            }
+            NVML_CLOCK_SM => {
+                if kepler {
+                    967
+                } else {
+                    1590
+                }
+            }
+            NVML_CLOCK_MEM => {
+                if kepler {
+                    2500
+                } else {
+                    5001
+                }
+            }
+            NVML_CLOCK_VIDEO => {
+                if kepler {
+                    540
+                } else {
+                    1500
+                }
+            }
             _ => return NVML_ERROR_INVALID_ARGUMENT,
         };
         unsafe {
@@ -1202,6 +1457,7 @@ pub const NVML_DEVICE_ARCH_UNKNOWN: u32 = 0xffffffff;
 
 fn arch_for_device(device_id: u16) -> u32 {
     match device_id {
+        d if is_nvidia_kepler_nvkm(d) => NVML_DEVICE_ARCH_KEPLER,
         d if (0x1e00..=0x1fff).contains(&d) => NVML_DEVICE_ARCH_TURING,
         d if (0x2200..=0x25ff).contains(&d) => NVML_DEVICE_ARCH_AMPERE,
         d if (0x2600..=0x28ff).contains(&d) => NVML_DEVICE_ARCH_ADA,
@@ -1599,8 +1855,14 @@ pub extern "C" fn nvmlDeviceGetMaxPcieLinkWidth(
         if !s.gpus[idx].manifold.is_online() {
             return NVML_ERROR_NOT_SUPPORTED;
         }
+        let width = s.gpus[idx]
+            .host_sysfs
+            .as_deref()
+            .and_then(|p| read_trim(&p.join("max_link_width")))
+            .and_then(|w| w.parse::<u32>().ok())
+            .unwrap_or(16);
         unsafe {
-            *max_link_width = 16;
+            *max_link_width = width;
         }
         NVML_SUCCESS
     })
@@ -1625,8 +1887,14 @@ pub extern "C" fn nvmlDeviceGetCurrPcieLinkWidth(
         if !s.gpus[idx].manifold.is_online() {
             return NVML_ERROR_NOT_SUPPORTED;
         }
+        let width = s.gpus[idx]
+            .host_sysfs
+            .as_deref()
+            .and_then(|p| read_trim(&p.join("current_link_width")))
+            .and_then(|w| w.parse::<u32>().ok())
+            .unwrap_or(16);
         unsafe {
-            *curr_link_width = 16;
+            *curr_link_width = width;
         }
         NVML_SUCCESS
     })

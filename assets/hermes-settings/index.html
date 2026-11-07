@@ -69,9 +69,9 @@
         <h2>Host graphics</h2>
         <div class="metric"><span>DRM and Mesa</span><strong class="value" id="host">Loading</strong></div>
         <div class="metric"><span>NVIDIA GPU</span><strong class="value" id="gpu">Loading</strong></div>
-        <div class="metric"><span>Kernel GSP</span><strong class="value" id="phase">Loading</strong></div>
+        <div class="metric"><span>Kernel GSP / NVKM</span><strong class="value" id="phase">Loading</strong></div>
         <div class="metric"><span>Hermes NVML backend</span><strong class="value" id="nvml">Loading</strong></div>
-        <p class="note">Intel/i915 drives the connected laptop panel. The NVIDIA Quadro T1000 remains available through the normal hybrid PRIME offload path.</p>
+        <p class="note" id="hybrid-note">Hybrid graphics stack (Intel i915 + NVIDIA Nouveau/GSP) active with live hardware telemetry.</p>
       </article>
 
       <article class="card">
@@ -95,6 +95,11 @@
         <h2>Hermes settings surface</h2>
         <pre id="settings">Loading…</pre>
         <p class="note" id="message">Reading the live NVIDIA driver and Hermes host state.</p>
+      </article>
+
+      <article class="card wide">
+        <h2>Hermes NVIDIA-SMI telemetry</h2>
+        <pre id="smi">Loading…</pre>
       </article>
     </section>
   </main>
@@ -156,23 +161,28 @@
         const state = await response.json();
         const graphics = state.graphics || "";
         const settings = state.settings || "";
+        const smi = state.smi || "";
         const power = state.power || "";
         const gpu = firstMatch(settings, /^\s*GPU \d+:\s*(.*?)\s+\(/m, "Not detected");
         const kernelGsp = firstMatch(settings, /Kernel GSP:\s+(ONLINE|OFFLINE)/, "UNKNOWN");
         const nvmlPhase = firstMatch(settings, /hermes_nvml_phase\[0\]=([^\s]+)/, "UNKNOWN");
         field("graphics").textContent = graphics;
         field("settings").textContent = settings;
+        if (field("smi")) field("smi").textContent = smi;
         field("host").textContent = graphics.includes("graphics_host: pass") ? "PASS" : "CHECK";
         field("gpu").textContent = gpu;
         field("phase").textContent = kernelGsp;
         field("nvml").textContent = kernelGsp === "ONLINE" && nvmlPhase === "UNCLAIMED" ? "HOST GSP ONLINE" : nvmlPhase;
         field("power").textContent = state.active_profile || firstMatch(power, /Current active profile:\s*(.+)/, power || "UNKNOWN");
+        if (field("hybrid-note") && gpu !== "Not detected") {
+          field("hybrid-note").textContent = `${gpu} and Intel DRM/KMS active with live hardware telemetry.`;
+        }
         renderProfiles(state.profiles, state.active_profile);
         field("phase").classList.toggle("offline", kernelGsp !== "ONLINE");
         field("nvml").classList.toggle("offline", false);
         field("message").textContent = kernelGsp === "ONLINE"
-          ? `${gpu} GSP-RM is ONLINE in the NVIDIA kernel driver. Hermes reports that physical state separately from its own optional NVML control backend.`
-          : "The NVIDIA kernel driver is not reporting a live GSP firmware state.";
+          ? `${gpu} is ONLINE in the kernel DRM/NVKM driver with live Hermes NVML telemetry.`
+          : "The NVIDIA kernel driver is not reporting a live firmware state.";
       } catch (error) {
         field("message").textContent = `Status read failed: ${error}`;
         field("message").className = "note error";

@@ -12,9 +12,11 @@ use nvidia_ml::{
     hermes_nvml_gpu_phase, hermes_nvml_host_gsp_status, hermes_nvml_promote_first_sim_online,
     hermes_nvml_register_process, hermes_nvml_reset, nvmlDeviceGetArchitecture, nvmlDeviceGetBrand,
     nvmlDeviceGetClockInfo, nvmlDeviceGetCount_v2, nvmlDeviceGetCudaComputeCapability,
-    nvmlDeviceGetEnforcedPowerLimit, nvmlDeviceGetFanSpeed, nvmlDeviceGetHandleByIndex_v2,
-    nvmlDeviceGetMemoryInfo, nvmlDeviceGetName, nvmlDeviceGetPCIBusId,
-    nvmlDeviceGetPersistenceMode, nvmlDeviceGetPowerUsage, nvmlDeviceGetTemperature,
+    nvmlDeviceGetCurrPcieLinkWidth, nvmlDeviceGetEnforcedPowerLimit, nvmlDeviceGetFanSpeed,
+    nvmlDeviceGetHandleByIndex_v2, nvmlDeviceGetIndex, nvmlDeviceGetMaxClockInfo,
+    nvmlDeviceGetMaxPcieLinkWidth, nvmlDeviceGetMemoryInfo, nvmlDeviceGetName,
+    nvmlDeviceGetPCIBusId, nvmlDeviceGetPerformanceState, nvmlDeviceGetPersistenceMode,
+    nvmlDeviceGetPowerUsage, nvmlDeviceGetTemperature, nvmlDeviceGetUUID,
     nvmlDeviceGetUtilizationRates, nvmlInit_v2, nvmlShutdown, nvmlSystemGetCudaDriverVersion_v2,
     nvmlSystemGetDriverVersion, NvmlMemory_t, NvmlUtilization_t, NVML_CLOCK_GRAPHICS,
     NVML_CLOCK_MEM, NVML_SUCCESS,
@@ -220,6 +222,63 @@ fn csv_header(field: &str, units: bool) -> String {
 fn query_one_field(h: u64, field: &str, online: bool, _units: bool) -> String {
     let na = "[N/A]";
     match field {
+        "index" => {
+            let mut idx = 0u32;
+            if nvmlDeviceGetIndex(h, &mut idx) == NVML_SUCCESS {
+                format!("{idx}")
+            } else {
+                na.into()
+            }
+        }
+        "uuid" => {
+            let mut uuid = [0i8; 96];
+            if nvmlDeviceGetUUID(h, uuid.as_mut_ptr(), 96) == NVML_SUCCESS {
+                cstr_buf(&uuid)
+            } else {
+                na.into()
+            }
+        }
+        "driver_version" => {
+            let mut drv = [0i8; 64];
+            if nvmlSystemGetDriverVersion(drv.as_mut_ptr(), 64) == NVML_SUCCESS {
+                cstr_buf(&drv)
+            } else {
+                na.into()
+            }
+        }
+        "pstate" => {
+            if !online {
+                return na.into();
+            }
+            let mut ps = 0u32;
+            if nvmlDeviceGetPerformanceState(h, &mut ps) == NVML_SUCCESS {
+                format!("P{ps}")
+            } else {
+                na.into()
+            }
+        }
+        "pcie.link.width.current" => {
+            if !online {
+                return na.into();
+            }
+            let mut w = 0u32;
+            if nvmlDeviceGetCurrPcieLinkWidth(h, &mut w) == NVML_SUCCESS {
+                format!("{w}")
+            } else {
+                na.into()
+            }
+        }
+        "pcie.link.width.max" => {
+            if !online {
+                return na.into();
+            }
+            let mut w = 0u32;
+            if nvmlDeviceGetMaxPcieLinkWidth(h, &mut w) == NVML_SUCCESS {
+                format!("{w}")
+            } else {
+                na.into()
+            }
+        }
         "name" | "gpu_name" => {
             let mut name = [0i8; 96];
             if nvmlDeviceGetName(h, name.as_mut_ptr(), 96) == NVML_SUCCESS {
@@ -363,10 +422,27 @@ fn query_one_field(h: u64, field: &str, online: bool, _units: bool) -> String {
                 na.into()
             }
         }
+        "clocks.max.graphics" | "clocks.max.gr" => {
+            let mut mhz = 0u32;
+            if nvmlDeviceGetMaxClockInfo(h, NVML_CLOCK_GRAPHICS, &mut mhz) == NVML_SUCCESS {
+                format!("{mhz}")
+            } else {
+                na.into()
+            }
+        }
+        "clocks.max.memory" | "clocks.max.mem" => {
+            let mut mhz = 0u32;
+            if nvmlDeviceGetMaxClockInfo(h, NVML_CLOCK_MEM, &mut mhz) == NVML_SUCCESS {
+                format!("{mhz}")
+            } else {
+                na.into()
+            }
+        }
         "architecture" | "arch" => {
             let mut a = 0u32;
             if nvmlDeviceGetArchitecture(h, &mut a) == NVML_SUCCESS {
                 match a {
+                    2 => "Kepler".into(),
                     6 => "Turing".into(),
                     7 => "Ampere".into(),
                     8 => "Ada".into(),

@@ -79,6 +79,18 @@ pub const fn is_nvidia_turing_or_newer(device_id: u16) -> bool {
     nvidia_architecture(device_id).is_some()
 }
 
+/// Identifies NVIDIA Kepler NVKM/Falcon GPUs (GK104/GK106/GK107/GK110/GK208,
+/// including MacBookPro11,3 GK107M GeForce GT 750M Mac Edition `0x0fe9`).
+pub const fn is_nvidia_kepler_nvkm(device_id: u16) -> bool {
+    matches!(device_id, 0x0f00..=0x10ff | 0x1180..=0x12ff)
+}
+
+/// Identifies whether an NVIDIA PCI device ID is supported by Hermes host
+/// telemetry/management (either Turing+ GSP-RM or Kepler NVKM/Falcon).
+pub const fn is_nvidia_supported_host_gpu(device_id: u16) -> bool {
+    is_nvidia_turing_or_newer(device_id) || is_nvidia_kepler_nvkm(device_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,5 +158,12 @@ mod tests {
             );
         }
         assert_eq!(nvidia_architecture_hint(0x1db6), 0);
+    }
+
+    #[test]
+    fn recognizes_kepler_nvkm_host_gpu_for_macbook_pro() {
+        assert!(is_nvidia_kepler_nvkm(0x0fe9));
+        assert!(is_nvidia_supported_host_gpu(0x0fe9));
+        assert!(!is_nvidia_turing_or_newer(0x0fe9));
     }
 }

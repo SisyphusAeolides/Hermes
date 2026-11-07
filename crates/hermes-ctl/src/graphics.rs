@@ -322,7 +322,13 @@ pub fn probe(class_drm: &Path, dev_dri: &Path, lib_root: &Path) -> GraphicsRepor
 
     let mesa_library = ["libEGL.so.1", "libGLX.so.0", "libGL.so.1"]
         .iter()
-        .map(|name| lib_root.join(name))
+        .flat_map(|name| {
+            let mut candidates = vec![lib_root.join(name)];
+            if lib_root == Path::new("/usr/lib") {
+                candidates.insert(0, Path::new("/usr/lib64").join(name));
+            }
+            candidates
+        })
         .find(|path| path.exists());
     let session_type = std::env::var("XDG_SESSION_TYPE").ok();
     let session_display = match session_type.as_deref() {
