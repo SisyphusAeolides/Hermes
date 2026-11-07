@@ -2,12 +2,15 @@
 
 Name:           hermes
 Version:        0.1.0
-Release:        2%{?dist}
+Release:        3%{?dist}
 Summary:        Open-source GPU System Processor and Firmware Host for NVIDIA, AMD, and Intel GPUs
 
 License:        MIT
 URL:            https://github.com/SisyphusAeolides/Hermes
 Source0:        %{url}/archive/main/%{name}-main.tar.gz
+
+Provides:       libnvidia-ml.so()(64bit)
+Provides:       libnvidia-ml.so.1()(64bit)
 
 BuildRequires:  cargo
 BuildRequires:  clang
@@ -61,6 +64,9 @@ install -Dm644 assets/icons/hermes-gpu-settings.svg %{buildroot}%{_datadir}/icon
 %{_datadir}/icons/hicolor/scalable/apps/hermes-gpu-settings.svg
 
 %changelog
+* Sat Nov 07 2026 Kenny Glauner <SisyphusAeolides@pm.me> - 0.1.0-3
+- Provide libnvidia-ml.so()(64bit) and libnvidia-ml.so.1()(64bit) for unsplit RPM installation
+
 * Sat Nov 07 2026 Kenny Glauner <SisyphusAeolides@pm.me> - 0.1.0-2
 - Add MacBook Pro Kepler NVKM, Intel Crystal Well Gen7.5, live sysfs/applesmc telemetry, and hermes-settings-gui packaging
 
